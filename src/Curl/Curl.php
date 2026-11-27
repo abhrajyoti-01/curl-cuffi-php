@@ -393,7 +393,10 @@ class Curl
     /** Human-readable message for a CURLcode. */
     public function strerror(int $code): string
     {
-        return FFI::string($this->ffi->curl_easy_strerror($code));
+        // PHP FFI returns `const char *` results as PHP strings already.
+        $message = $this->ffi->curl_easy_strerror($code);
+
+        return $message instanceof CData ? FFI::string($message) : (string) $message;
     }
 
     /**
