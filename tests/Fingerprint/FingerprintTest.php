@@ -62,6 +62,29 @@ final class FingerprintTest extends TestCase
         self::assertSame($py['akamai'], $php['akamai']);
     }
 
+    #[DataProvider('targets')]
+    public function testRequestsApiMatchesPythonCurlCffi(string $target): void
+    {
+        if (!Library::supportsImpersonation()) {
+            self::markTestSkipped('libcurl-impersonate is not loaded');
+        }
+        $refFile = getenv('CURL_CFFI_FP_REFERENCE');
+        if (!is_string($refFile) || !is_file($refFile)) {
+            self::markTestSkipped('Set CURL_CFFI_FP_REFERENCE to the output of python_reference.py');
+        }
+        $reference = json_decode((string) file_get_contents($refFile), true, 512, JSON_THROW_ON_ERROR);
+        if (!isset($reference[$target])) {
+            self::markTestSkipped("No Python reference for $target");
+        }
+
+        // Same call as Python's requests.get(URL, impersonate=target, timeout=30)
+        $php = \CurlCffi\Requests\Requests::get(self::ECHO_URL, impersonate: $target, timeout: 30)->json();
+        $py = $reference[$target];
+
+        self::assertSame($py['ja4'], $php['ja4'], "JA4 differs for $target");
+        self::assertSame($py['akamai_hash'], $php['akamai_hash'], "HTTP/2 Akamai fingerprint differs for $target");
+    }
+
     /** @return array<string, mixed> */
     public static function fetch(string $target): array
     {
