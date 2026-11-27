@@ -1,0 +1,236 @@
+#!/usr/bin/env php
+<?php
+
+/**
+ * Downloads the prebuilt libcurl-impersonate shared library for this OS/CPU
+ * from https://github.com/lexiforest/curl-impersonate/releases into lib/,
+ * plus Mozilla's CA bundle from https://curl.se/ca/cacert.pem.
+ *
+ * Usage:
+ *   vendor/bin/curl-cffi-install [--tag=v1.2.3] [--platform=x86_64-linux-gnu] [--force]
+ *
+ * Environment:
+ *   GITHUB_TOKEN  optional, avoids GitHub API rate limits
+ */
+
+declare(strict_types=1);
+
+const REPO = 'lexiforest/curl-impersonate';
+const USER_AGENT = 'curl-cffi-php-installer';
+
+$autoloaders = [
+    __DIR__ . '/../vendor/autoload.php',       // running inside this repo
+    __DIR__ . '/../../../autoload.php',        // installed as vendor/abhrajyoti-01/curl-cffi-php
+    $_composer_autoload_path ?? '',
+];
+foreach ($autoloaders as $autoload) {
+    if ($autoload !== '' && is_file($autoload)) {
+        require $autoload;
+        break;
+    }
+}
+if (!class_exists(\CurlCffi\Ffi\Platform::class)) {
+    require __DIR__ . '/../src/Ffi/Platform.php';
+    require __DIR__ . '/../src/Ffi/Library.php';
+}
+
+use CurlCffi\Ffi\Library;
+use CurlCffi\Ffi\Platform;
+
+$options = getopt('', ['tag:', 'platform:', 'force', 'help']);
+if (isset($options['help'])) {
+    fwrite(STDOUT, "Usage: curl-cffi-install [--tag=vX.Y.Z] [--platform=ARCH-OS] [--force]\n");
+    exit(0);
+}
+
+$platform = $options['platform'] ?? Platform::id();
+$tag = $options['tag'] ?? null;
+$force = isset($options['force']);
+$targetDir = Library::libDir() . DIRECTORY_SEPARATOR . $platform;
+
+try {
+    if (!$force && findLibrary($targetDir) !== null) {
+        out("libcurl-impersonate already installed in $targetDir (use --force to reinstall)");
+    } else {
+        installLibrary($platform, $tag, $targetDir);
+    }
+    installCaBundle(Library::libDir(), $force);
+    out('Done.');
+} catch (Throwable $e) {
+    fwrite(STDERR, 'curl-cffi-install: ' . $e->getMessage() . "\n");
+    exit(1);
+}
+
+function installLibrary(string $platform, ?string $tag, string $targetDir): void
+{
+    $api = 'https://api.github.com/repos/' . REPO . '/releases/' . ($tag ? 'tags/' . rawurlencode($tag) : 'latest');
+    out("Looking up release " . ($tag ?? 'latest') . " of " . REPO . '...');
+    $release = json_decode(httpGet($api, true), true, 512, JSON_THROW_ON_ERROR);
+
+    [$arch, $os] = explode('-', $platform, 2);
+    $asset = null;
+    foreach ($release['assets'] ?? [] as $candidate) {
+        $name = (string) $candidate['name'];
+        // e.g. libcurl-impersonate-v1.0.0.x86_64-linux-gnu.tar.gz
+        if (str_starts_with($name, 'libcurl-impersonate')
+            && str_contains($name, ".{$arch}-{$os}.")
+            && preg_match('/\.(tar\.gz|tgz|zip)$/', $name)) {
+            $asset = $candidate;
+            break;
+        }
+    }
+    if ($asset === null) {
+        $names = array_map(static fn ($a) => $a['name'], $release['assets'] ?? []);
+        throw new RuntimeException(
+            "No libcurl-impersonate build for platform \"$platform\" in release {$release['tag_name']}.\n"
+            . "Available assets:\n  " . implode("\n  ", $names)
+            . "\nPick one with --platform=ARCH-OS, or build it yourself and set CURL_CFFI_LIBRARY."
+        );
+    }
+
+    out("Downloading {$asset['name']}...");
+    $data = httpGet((string) $asset['browser_download_url'], false);
+
+    $digest = (string) ($asset['digest'] ?? '');
+    if (str_starts_with($digest, 'sha256:')) {
+        $expected = substr($digest, 7);
+        if (!hash_equals($expected, hash('sha256', $data))) {
+            throw new RuntimeException("SHA-256 mismatch for {$asset['name']}");
+        }
+        out('SHA-256 verified.');
+    } else {
+        out('Warning: the release does not publish a SHA-256 digest for this asset; skipped verification.');
+    }
+
+    $work = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'curl-cffi-' . bin2hex(random_bytes(6));
+    mkdir($work, 0700, true);
+    $archive = $work . DIRECTORY_SEPARATOR . $asset['name'];
+    file_put_contents($archive, $data);
+    $extractDir = $work . DIRECTORY_SEPARATOR . 'x';
+    mkdir($extractDir);
+    extractArchive($archive, $extractDir);
+
+    if (!is_dir($targetDir) && !mkdir($targetDir, 0755, true) && !is_dir($targetDir)) {
+        throw new RuntimeException("Cannot create $targetDir");
+    }
+    $copied = 0;
+    $iterator = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($extractDir, FilesystemIterator::SKIP_DOTS));
+    foreach ($iterator as $file) {
+        $name = $file->getFilename();
+        if (preg_match('/\.(so(\.\d+)*|dylib|dll)$/', $name)) {
+            // Resolve symlinks (libcurl-impersonate.so.4 -> .so.4.8.0) into real copies.
+            copy($file->getRealPath(), $targetDir . DIRECTORY_SEPARATOR . $name);
+            $copied++;
+        }
+    }
+    removeDir($work);
+    if ($copied === 0 || findLibrary($targetDir) === null) {
+        throw new RuntimeException("The archive {$asset['name']} contained no usable shared library.");
+    }
+    file_put_contents($targetDir . DIRECTORY_SEPARATOR . 'VERSION', $release['tag_name'] . "\n");
+    out("Installed libcurl-impersonate {$release['tag_name']} to $targetDir");
+}
+
+function installCaBundle(string $libDir, bool $force): void
+{
+    $file = $libDir . DIRECTORY_SEPARATOR . 'cacert.pem';
+    if (!$force && is_file($file)) {
+        return;
+    }
+    out('Downloading Mozilla CA bundle from curl.se...');
+    $pem = httpGet('https://curl.se/ca/cacert.pem', false);
+    $sum = trim(explode(' ', httpGet('https://curl.se/ca/cacert.pem.sha256', false))[0]);
+    if (!hash_equals($sum, hash('sha256', $pem))) {
+        throw new RuntimeException('SHA-256 mismatch for cacert.pem');
+    }
+    if (!is_dir($libDir)) {
+        mkdir($libDir, 0755, true);
+    }
+    file_put_contents($file, $pem);
+    out("Installed CA bundle to $file");
+}
+
+function findLibrary(string $dir): ?string
+{
+    foreach (Platform::libraryFileNames() as $name) {
+        if (is_file($dir . DIRECTORY_SEPARATOR . $name)) {
+            return $dir . DIRECTORY_SEPARATOR . $name;
+        }
+    }
+
+    return null;
+}
+
+function extractArchive(string $archive, string $dest): void
+{
+    if (str_ends_with($archive, '.zip')) {
+        if (!class_exists(ZipArchive::class)) {
+            throw new RuntimeException('ext-zip is needed to unpack ' . basename($archive));
+        }
+        $zip = new ZipArchive();
+        if ($zip->open($archive) !== true || !$zip->extractTo($dest)) {
+            throw new RuntimeException('Cannot unpack ' . basename($archive));
+        }
+        $zip->close();
+
+        return;
+    }
+    // Prefer the tar command: it keeps symlinks, which PharData does not.
+    $tar = PHP_OS_FAMILY === 'Windows' ? 'tar.exe' : 'tar';
+    $cmd = [$tar, '-xzf', $archive, '-C', $dest];
+    $proc = @proc_open($cmd, [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
+    if (is_resource($proc)) {
+        stream_get_contents($pipes[1]);
+        $err = stream_get_contents($pipes[2]);
+        if (proc_close($proc) === 0) {
+            return;
+        }
+        out("tar failed ($err), trying PharData...");
+    }
+    $phar = new PharData($archive);
+    $phar->extractTo($dest, null, true);
+}
+
+function httpGet(string $url, bool $githubApi): string
+{
+    $headers = ['User-Agent: ' . USER_AGENT];
+    if ($githubApi) {
+        $headers[] = 'Accept: application/vnd.github+json';
+        $token = getenv('GITHUB_TOKEN');
+        if (is_string($token) && $token !== '') {
+            $headers[] = 'Authorization: Bearer ' . $token;
+        }
+    }
+    $context = stream_context_create([
+        'http' => ['header' => implode("\r\n", $headers), 'follow_location' => 1, 'timeout' => 120, 'ignore_errors' => true],
+    ]);
+    $body = @file_get_contents($url, false, $context);
+    $status = 0;
+    foreach ($http_response_header ?? [] as $line) {
+        if (preg_match('#^HTTP/\S+ (\d{3})#', $line, $m)) {
+            $status = (int) $m[1]; // last status after redirects
+        }
+    }
+    if ($body === false || $status >= 400 || $status === 0) {
+        throw new RuntimeException("GET $url failed (HTTP $status)");
+    }
+
+    return $body;
+}
+
+function removeDir(string $dir): void
+{
+    $it = new RecursiveIteratorIterator(
+        new RecursiveDirectoryIterator($dir, FilesystemIterator::SKIP_DOTS),
+        RecursiveIteratorIterator::CHILD_FIRST
+    );
+    foreach ($it as $f) {
+        $f->isDir() && !$f->isLink() ? rmdir($f->getPathname()) : unlink($f->getPathname());
+    }
+    rmdir($dir);
+}
+
+function out(string $message): void
+{
+    fwrite(STDOUT, $message . "\n");
+}

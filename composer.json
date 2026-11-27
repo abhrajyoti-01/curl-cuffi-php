@@ -1,0 +1,35 @@
+{
+    "name": "abhrajyoti-01/curl-cffi-php",
+    "description": "Browser-impersonating HTTP client for PHP: TLS (JA3/JA4) and HTTP/2 fingerprints of Chrome, Safari, Firefox and Edge via libcurl-impersonate. A PHP port of Python's curl_cffi, no Python needed.",
+    "type": "library",
+    "license": "MIT",
+    "keywords": ["curl", "curl_cffi", "curl-impersonate", "http", "http2", "tls", "ja3", "ja4", "fingerprint", "impersonate", "ffi"],
+    "require": {
+        "php": ">=8.1",
+        "ext-ffi": "*"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^10.5"
+    },
+    "suggest": {
+        "ext-zlib": "Lets the installer unpack .tar.gz archives without the tar command"
+    },
+    "autoload": {
+        "psr-4": {
+            "CurlCffi\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "CurlCffi\\Tests\\": "tests/"
+        }
+    },
+    "bin": ["bin/curl-cffi-install"],
+    "scripts": {
+        "install-lib": "@php bin/curl-cffi-install",
+        "test": "@php -d ffi.enable=1 vendor/bin/phpunit"
+    },
+    "config": {
+        "sort-packages": true
+    }
+}
