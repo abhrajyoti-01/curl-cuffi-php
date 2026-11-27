@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  tests:
+    name: PHP ${{ matrix.php }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ['8.1', '8.2', '8.3', '8.4']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: ffi, zlib, openssl
+          ini-values: ffi.enable=1
+      - run: composer install --no-interaction --no-progress
+      - name: Unit and integration tests against stock libcurl
+        run: CURL_CFFI_LIBRARY=libcurl.so.4 vendor/bin/phpunit
+      - name: Download libcurl-impersonate
+        run: php bin/curl-cffi-install
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Integration tests against libcurl-impersonate
+        run: vendor/bin/phpunit --testsuite integration
+
+  fingerprint:
+    name: Fingerprint parity with Python curl_cffi
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: ffi
+          ini-values: ffi.enable=1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install curl_cffi
+      - run: python tests/Fingerprint/python_reference.py "$RUNNER_TEMP/reference.json"
+      - run: composer install --no-interaction --no-progress
+      - run: php bin/curl-cffi-install
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Compare PHP fingerprints with Python's
+        run: vendor/bin/phpunit --testsuite fingerprint --group network --display-skipped
+        env:
+          CURL_CFFI_FP_REFERENCE: ${{ runner.temp }}/reference.json
