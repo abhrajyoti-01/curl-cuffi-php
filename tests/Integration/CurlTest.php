@@ -142,7 +142,8 @@ final class CurlTest extends TestCase
     public function testStrerror(): void
     {
         $c = new Curl();
-        self::assertSame("Couldn't connect to server", $c->strerror(CurlECode::COULDNT_CONNECT));
+        // Wording differs between libcurl versions ("Couldn't" vs "Could not").
+        self::assertMatchesRegularExpression('/connect to server/i', $c->strerror(CurlECode::COULDNT_CONNECT));
         self::assertSame('No error', $c->strerror(CurlECode::OK));
     }
 
