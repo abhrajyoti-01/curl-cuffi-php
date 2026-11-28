@@ -115,6 +115,49 @@ class Response
         };
     }
 
+    /**
+     * The page's main content as Markdown, like Python's Response.markdown():
+     * readability picks the article and its title, then they are converted
+     * to Markdown as "<h1>title</h1><main>article</main>".
+     *
+     * Needs two optional packages, as Python needs its "extra" dependencies:
+     *     composer require fivefilters/readability.php league/html-to-markdown
+     */
+    public function markdown(): string
+    {
+        if (!class_exists(\fivefilters\Readability\Readability::class)
+            || !class_exists(\League\HTMLToMarkdown\HtmlConverter::class)) {
+            throw new \LogicException(
+                'Response::markdown() needs: composer require fivefilters/readability.php league/html-to-markdown'
+            );
+        }
+        $html = $this->text();
+        $readability = new \fivefilters\Readability\Readability(new \fivefilters\Readability\Configuration());
+        try {
+            $readability->parse($html);
+            $title = (string) $readability->getTitle();
+            $summary = (string) $readability->getContent();
+        } catch (\fivefilters\Readability\ParseException) {
+            // No article found (a short page): use the whole body.
+            $title = preg_match('~<title[^>]*>(.*?)</title>~is', $html, $m) ? html_entity_decode(trim($m[1])) : '';
+            $summary = preg_match('~<body[^>]*>(.*)</body>~is', $html, $m) ? $m[1] : $html;
+        }
+        $converter = new \League\HTMLToMarkdown\HtmlConverter(['strip_tags' => true, 'remove_nodes' => 'head script style']);
+
+        $markdown = $converter->convert('<h1>' . htmlspecialchars($title, ENT_QUOTES | ENT_HTML5) . "</h1><main>{$summary}</main>");
+
+        // Plain characters rather than HTML entities, as Python's markdownify
+        // writes them, with heading underlines as long as the decoded text.
+        $lines = explode("\n", html_entity_decode($markdown, ENT_QUOTES | ENT_HTML5, 'UTF-8'));
+        for ($i = 1, $n = count($lines); $i < $n; $i++) {
+            if (preg_match('/^(=+|-+)$/', $lines[$i]) && trim($lines[$i - 1]) !== '' && !preg_match('/^(=+|-+)$/', $lines[$i - 1])) {
+                $lines[$i] = str_repeat($lines[$i][0], max(3, (int) preg_match_all('/./us', $lines[$i - 1])));
+            }
+        }
+
+        return implode("\n", $lines);
+    }
+
     /** Body decoded to UTF-8 using encoding(); invalid bytes are replaced. */
     public function text(): string
     {

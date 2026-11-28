@@ -23,6 +23,12 @@ dependency.
 - `WebSocket` and `AsyncWebSocket`: send/recv of text, binary and JSON, ping/pong, close codes,
   fragmentation, `run_forever()` callbacks, `ws_retry`.
 - `Session::upkeep()`, `AsyncSession::upkeep()`, `Curl::upkeep()` and `Session(curl: ...)`.
+- The response cache: `Session(cache: ...)`, `CacheBackend` and `FileCacheBackend`, with the
+  same HAR files and keys as Python's, so the two can share a cache folder.
+- `CurlShare` and `curl_share:` to share DNS, TLS sessions and connections between handles and
+  sessions.
+- `Response::markdown()`, with the optional fivefilters/readability.php and
+  league/html-to-markdown packages.
 - `CurlCffi\Warnings`: curl_cffi's warnings, off by default as in Python
   (`Warnings::config(on: true)` is `config_warnings(on=True)`).
 - An API parity test suite that checks every option, method, class, exception and constant of

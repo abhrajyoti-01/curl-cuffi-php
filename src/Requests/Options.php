@@ -27,7 +27,7 @@ final class Options
         'timeout', 'trust_env', 'allow_redirects', 'max_redirects', 'retry', 'impersonate', 'ja3',
         'akamai', 'perk', 'extra_fp', 'default_headers', 'default_encoding', 'curl_options', 'curl_infos',
         'http_version', 'debug', 'interface', 'dns', 'doh_url', 'cert', 'response_class',
-        'discard_cookies', 'raise_for_status',
+        'discard_cookies', 'raise_for_status', 'cache', 'curl_share',
     ];
 
     /** Options of a WebSocket handshake: those of a GET request, plus curl_options. */

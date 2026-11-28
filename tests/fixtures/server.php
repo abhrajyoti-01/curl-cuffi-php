@@ -2,6 +2,17 @@
 // Echo server for integration tests: php -S 127.0.0.1:PORT tests/fixtures/server.php
 $path = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
 
+if ($path === '/random') {
+    // A new value on every call, so a cached response is easy to spot.
+    // ?status=N answers with that status; ?cookie=V also sets cache_cookie=V.
+    if (isset($_GET['cookie'])) {
+        setcookie('cache_cookie', (string) $_GET['cookie']);
+    }
+    http_response_code((int) ($_GET['status'] ?? 200));
+    header('Content-Type: application/json');
+    echo json_encode(['value' => bin2hex(random_bytes(8)), 'method' => $_SERVER['REQUEST_METHOD'], 'body' => file_get_contents('php://input')]);
+    exit;
+}
 if ($path === '/redirect') {
     header('Location: /echo?redirected=1', true, 302);
     exit;
