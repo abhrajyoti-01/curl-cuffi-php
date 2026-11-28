@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace CurlCffi\Tests\Parity;
 
+use CurlCffi\Cli\Items;
+use CurlCffi\Cli\Main;
 use CurlCffi\Requests\Options;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
@@ -268,6 +270,41 @@ final class ApiParityTest extends TestCase
             }
         }
         self::assertSame([], $stale, 'Take these off ApiDifferences::NOT_PORTED');
+    }
+
+    /** The curl-cffi command has the same subcommands, in the same order. */
+    public function testCliCommands(): void
+    {
+        self::assertSame(self::reference()['cli']['commands'], array_keys(Main::parsers()));
+    }
+
+    /** Each subcommand takes the same options and positionals, with the same defaults. */
+    public function testCliArguments(): void
+    {
+        $ref = self::reference()['cli'];
+        $verbs = array_map('strtoupper', Items::SUPPORTED_METHODS);
+        $problems = [];
+        foreach (Main::parsers() as $command => $parser) {
+            $key = in_array(strtoupper($command), $verbs, true) ? '<verb>' : $command;
+            $expected = $ref['arguments'][$key] ?? null;
+            if ($expected === null) {
+                $problems[] = "{$command}: not a Python subcommand";
+                continue;
+            }
+            $actual = [...$parser->optionStrings(), ...$parser->positionalNames()];
+            $missing = array_diff($expected, $actual);
+            $extra = array_diff($actual, $expected);
+            if ($missing !== [] || $extra !== []) {
+                $problems[] = "{$command}: missing [" . implode(' ', $missing) . '], extra [' . implode(' ', $extra) . ']';
+            }
+            foreach ($ref['defaults'] as $option => $default) {
+                if (in_array($option, $parser->optionStrings(), true) && $parser->defaultOf($option) !== $default) {
+                    $problems[] = "{$command} {$option}: default " . var_export($parser->defaultOf($option), true)
+                        . ', Python has ' . var_export($default, true);
+                }
+            }
+        }
+        self::assertSame([], $problems);
     }
 
     public function testReferenceIsForTheTargetedVersion(): void

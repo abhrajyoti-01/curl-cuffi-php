@@ -1,0 +1,32 @@
+#!/usr/bin/env php
+<?php
+
+/**
+ * HTTP requests with browser impersonation from the command line, like
+ * Python curl_cffi's `curl-cffi` command:
+ *
+ *     vendor/bin/curl-cffi get example.com
+ *     vendor/bin/curl-cffi post :8080/api name=Ann age:=30 X-Token:abc
+ *     vendor/bin/curl-cffi run requests.http
+ *     vendor/bin/curl-cffi --help
+ */
+
+declare(strict_types=1);
+
+$autoloaders = [
+    $_composer_autoload_path ?? '',
+    __DIR__ . '/../vendor/autoload.php',       // running inside this repo
+    __DIR__ . '/../../../autoload.php',        // installed as vendor/abhrajyoti-01/curl-cffi-php
+];
+foreach ($autoloaders as $autoload) {
+    if ($autoload !== '' && is_file($autoload)) {
+        require $autoload;
+        break;
+    }
+}
+if (!class_exists(\CurlCffi\Cli\Main::class)) {
+    fwrite(STDERR, "curl-cffi: cannot find Composer's autoloader; run composer install\n");
+    exit(1);
+}
+
+exit(\CurlCffi\Cli\Main::main($argv));
