@@ -8,6 +8,7 @@ use Closure;
 use CurlCffi\Curl\Const\CurlHttpVersion;
 use CurlCffi\Curl\Const\CurlInfo;
 use CurlCffi\Curl\Const\CurlOpt;
+use CurlCffi\Curl\Const\CurlWsFlag;
 use CurlCffi\Ffi\Library;
 use CurlCffi\Impersonate\BrowserType;
 use FFI;
@@ -46,6 +47,8 @@ class Curl
     ];
 
     /** Slists freed by perform(clearHeaders: true). */
+    private const WS_RECV_BUFFER_SIZE = 65536;
+
     private const HEADER_OPTIONS = [CurlOpt::HTTPHEADER, CurlOpt::HTTP3_HTTPHEADER, CurlOpt::WS_HTTPHEADER, CurlOpt::PROXYHEADER];
 
     /** Slists freed by perform(clearResolve: true). */
@@ -53,6 +56,7 @@ class Curl
 
     private FFI $ffi;
     private ?CData $handle;
+    private ?CData $wsRecvBuffer = null;
     private CData $errorBuffer;
     private string $cacert;
     private bool $isCertSet = false;
@@ -408,6 +412,80 @@ class Curl
         $this->keepAlive = [];
     }
 
+    /**
+     * Receive one chunk of a WebSocket frame (curl_ws_recv) on a handle
+     * connected with CONNECT_ONLY = 2. Throws CurlError with code
+     * CurlECode::AGAIN when nothing is waiting.
+     *
+     * @return array{0: string, 1: CurlWsFrame} content and frame metadata
+     */
+    public function wsRecv(): array
+    {
+        if ($this->handle === null) {
+            throw new CurlError('Cannot receive websocket data on closed handle.');
+        }
+        $ws = self::wsFfi();
+        $this->wsRecvBuffer ??= $ws->new('char[' . self::WS_RECV_BUFFER_SIZE . ']');
+        $received = $ws->new('size_t');
+        $meta = $ws->new('const struct curl_ws_frame *');
+        $this->clearErrorBuffer();
+        $ret = $ws->curl_ws_recv($this->handle, $this->wsRecvBuffer, self::WS_RECV_BUFFER_SIZE, FFI::addr($received), FFI::addr($meta));
+        if ($ret !== 0) {
+            $this->check($ret, 'WS_RECV');
+        }
+        $n = (int) $received->cdata;
+        $frame = FFI::isNull($meta)
+            ? new CurlWsFrame(0, 0, 0, 0, $n)
+            : new CurlWsFrame((int) $meta->age, (int) $meta->flags, (int) $meta->offset, (int) $meta->bytesleft, (int) $meta->len);
+
+        return [$n > 0 ? FFI::string($this->wsRecvBuffer, $n) : '', $frame];
+    }
+
+    /**
+     * Send WebSocket data (curl_ws_send). Returns the bytes sent, which can
+     * be fewer than strlen($payload); throws CurlError (code AGAIN) when the
+     * socket would block.
+     */
+    public function wsSend(string $payload, int $flags = CurlWsFlag::BINARY): int
+    {
+        if ($this->handle === null) {
+            throw new CurlError('Cannot send websocket data on closed handle.');
+        }
+        $ws = self::wsFfi();
+        $sent = $ws->new('size_t');
+        $this->clearErrorBuffer();
+        $ret = $ws->curl_ws_send($this->handle, $payload, strlen($payload), FFI::addr($sent), 0, $flags);
+        if ($ret !== 0) {
+            $this->check($ret, 'WS_SEND');
+        }
+
+        return (int) $sent->cdata;
+    }
+
+    /**
+     * Send a close frame. To finish closing, close() the handle afterwards.
+     */
+    public function wsClose(int $code = 1000, string $message = ''): int
+    {
+        $this->wsSend(pack('n', $code) . $message, CurlWsFlag::CLOSE);
+
+        return 0;
+    }
+
+    /** Metadata of the frame being delivered to a WRITEFUNCTION, or null. */
+    public function wsMeta(): ?CurlWsFrame
+    {
+        if ($this->handle === null) {
+            return null;
+        }
+        $meta = self::wsFfi()->curl_ws_meta($this->handle);
+        if ($meta === null || FFI::isNull($meta)) {
+            return null;
+        }
+
+        return new CurlWsFrame((int) $meta->age, (int) $meta->flags, (int) $meta->offset, (int) $meta->bytesleft, (int) $meta->len);
+    }
+
     /** The raw CURL* pointer, for CurlMulti. */
     public function handle(): ?CData
     {
@@ -475,6 +553,20 @@ class Curl
         }
         $this->setopt(CurlOpt::CAINFO, $this->cacert);
         $this->setopt(CurlOpt::PROXY_CAINFO, $this->cacert);
+    }
+
+    private static function wsFfi(): FFI
+    {
+        return Library::wsFfi() ?? throw new CurlError(
+            'The loaded libcurl (' . Library::loadedPath() . ') has no WebSocket API; load libcurl-impersonate instead.'
+        );
+    }
+
+    private function clearErrorBuffer(): void
+    {
+        if ($this->errorBuffer[0] !== "\0") {
+            FFI::memset($this->errorBuffer, 0, self::ERROR_BUFFER_SIZE);
+        }
     }
 
     private function check(int $code, string $action, ?int $option = null): int

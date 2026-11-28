@@ -5,9 +5,9 @@ impersonates real browsers, with matching TLS (JA3/JA4) and HTTP/2 fingerprints.
 of [libcurl-impersonate](https://github.com/lexiforest/curl-impersonate) through PHP's FFI
 extension. No Python, no compiled PHP extension.
 
-> **Status: milestone 4 of 5 in progress.** `Requests`, `Session`, `AsyncSession`, custom
-> fingerprints (`ja3`, `akamai`, `extra_fp`, `perk`, `Fingerprint`) and the low-level `Curl` class
-> work today. WebSocket is next.
+> **Status: milestone 4 of 5.** `Requests`, `Session`, `AsyncSession`, custom fingerprints
+> (`ja3`, `akamai`, `extra_fp`, `perk`, `Fingerprint`), `WebSocket` / `AsyncWebSocket` and the
+> low-level `Curl` class work today. Milestone 5 adds more platforms in CI and the Packagist release.
 
 ## Why not ext-curl?
 
@@ -139,6 +139,38 @@ $r = Requests::get($url, impersonate: 'a_downloaded_target');
 `extra_fp` takes an `ExtraFingerprints` object or an array with its field names. These options
 need libcurl-impersonate; with stock libcurl they throw `ImpersonateError`.
 
+### WebSocket
+
+```php
+use CurlCffi\Requests\WebSocket\WebSocket;
+
+// The handshake uses the session's settings: impersonate, cookies, headers, proxies
+$ws = $s->wsConnect('wss://example.com/ws', impersonate: 'chrome', headers: ['Origin' => 'https://example.com']);
+$ws->sendStr('hello');                    // also sendBinary(), sendJson(), ping()
+[$data, $flags] = $ws->recv(timeout: 5);  // or recvStr(), recvJson()
+foreach ($ws as $message) { /* until the server closes */ }
+$ws->close();
+
+// Callbacks, like Python's run_forever()
+$ws = new WebSocket(
+    on_open: fn (WebSocket $ws) => $ws->sendStr('subscribe'),
+    on_message: fn (WebSocket $ws, string $message) => print($message . "\n"),
+    on_close: fn (WebSocket $ws, int $code, string $reason) => print("closed {$code}\n"),
+);
+$ws->runForever('wss://example.com/ws', impersonate: 'chrome');
+
+// Async: many sockets and requests at once
+$s = new AsyncSession(impersonate: 'chrome');
+$s->run(function () use ($s) {
+    $ws = $s->wsConnect('wss://example.com/ws')->await();
+    $ws->sendStr('hello')->await();
+    foreach ($ws as $message) { /* other coroutines keep running */ }
+});
+```
+
+libcurl answers pings, messages are reassembled from fragments (up to `max_message_size`,
+4 MiB by default), and big messages are sent in 64 KiB frames, as in Python.
+
 Options are passed as PHP named arguments with the same names as Python (`allow_redirects`,
 `max_redirects`, `proxy_auth`, `default_headers`, ...). camelCase spellings (`allowRedirects`) work
 too. Unknown options throw a `TypeError`, like Python.
@@ -159,6 +191,10 @@ too. Unknown options throw a `TypeError`, like Python.
 | `RetryStrategy(count=3, delay=1)` | `new RetryStrategy(count: 3, delay: 1)` |
 | `ExtraFingerprints(tls_grease=True)` | `new ExtraFingerprints(tls_grease: true)` or `['tls_grease' => true]` |
 | `Fingerprint(...)`, `FingerprintManager.get_fingerprint(t)` | `new Fingerprint(...)`, `FingerprintManager::getFingerprint($t)` |
+| `ws = s.ws_connect(url)`, `ws.send_str(m)`, `ws.recv()` | `$ws = $s->wsConnect($url)`, `$ws->sendStr($m)`, `$ws->recv()` |
+| `WebSocket(on_message=f).run_forever(url)` | `(new WebSocket(on_message: $f))->runForever($url)` |
+| `ws = await s.ws_connect(url)`, `await ws.recv()` | `$ws = $s->wsConnect($url)->await()`, `$ws->recv()->await()` |
+| `async for msg in ws:` | `foreach ($ws as $msg)` inside `$s->run()` |
 | `s = AsyncSession(max_clients=10)` | `$s = new AsyncSession(max_clients: 10)` |
 | `r = await s.get(url)` | `$r = $s->get($url)->await()` |
 | `await asyncio.gather(*tasks)` | `$s->gather($promisesOrClosures)` |
@@ -182,7 +218,12 @@ Differences from Python:
   Python only has `multipart=`, which works here too.
 - `json()` returns arrays by default; pass `associative: false` for objects.
 - Python's `warnings.warn` (e.g. `ja3` together with `impersonate`) is a PHP `E_USER_WARNING`.
-- Not yet: WebSocket (milestone 4), the response cache, the `curl-cffi` command line tool and `thread=`.
+- `WebSocketClosed` and `WebSocketTimeout` extend `WebSocketError` (PHP has no multiple
+  inheritance, so they are not also `SessionClosed` / `Timeout`).
+- `AsyncSession::wsConnect()` does the handshake synchronously (Python uses a thread), and an
+  `AsyncWebSocket` reads while a `recv()` is waiting rather than in a background task. Python's
+  queue-tuning options such as `recv_queue_size` don't exist here.
+- Not yet: the response cache, the `curl-cffi` command line tool and `thread=`.
 
 ### Low level, same as `curl_cffi.Curl`
 
@@ -210,14 +251,14 @@ and values as curl_cffi, including the impersonation options such as `CurlOpt::H
 1. Core binding: FFI loader, installer, `Curl`, constants (done)
 2. `Requests::get()`, `Session`, `Response`, cookies, redirects, proxies, multipart, streaming (done)
 3. `AsyncSession` on `curl_multi` + PHP Fibers (done)
-4. Custom `ja3` / `akamai` / `extra_fp` / `perk` and `Fingerprint` (done), `WebSocket`
+4. Custom `ja3` / `akamai` / `extra_fp` / `perk`, `Fingerprint`, `WebSocket` / `AsyncWebSocket` (done)
 5. Parity test suite, CI on Linux/macOS/Windows, Packagist release
 
 ## Tests
 
 ```bash
 composer install
-CURL_CFFI_LIBRARY=libcurl.so.4 composer test     # against stock libcurl (impersonation tests skip)
+CURL_CFFI_LIBRARY=libcurl.so.4 composer test     # against stock libcurl (impersonation and ws:// tests may skip)
 php bin/curl-cffi-install && composer test       # against libcurl-impersonate
 ```
 

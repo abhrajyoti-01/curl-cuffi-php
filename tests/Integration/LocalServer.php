@@ -10,6 +10,7 @@ namespace CurlCffi\Tests\Integration;
  *  - url(): `php -S` with tests/fixtures/server.php (echo, cookies, redirects, ...)
  *  - delayUrl(): tests/fixtures/delay_server.php, which serves any number of
  *    `/delay?s=X` requests at the same time, for timing tests
+ *  - wsUrl(): tests/fixtures/ws_server.php, a WebSocket echo server
  */
 final class LocalServer
 {
@@ -40,6 +41,15 @@ final class LocalServer
         $port = self::$ports['delay'] ??= self::start(static fn (int $port) => [PHP_BINARY, $fixture, (string) $port]);
 
         return 'http://127.0.0.1:' . $port . '/delay?s=' . $seconds;
+    }
+
+    /** ws:// URL on tests/fixtures/ws_server.php, an RFC 6455 echo server. */
+    public static function wsUrl(string $path = '/ws'): string
+    {
+        $fixture = dirname(__DIR__) . '/fixtures/ws_server.php';
+        $port = self::$ports['ws'] ??= self::start(static fn (int $port) => [PHP_BINARY, $fixture, (string) $port]);
+
+        return 'ws://127.0.0.1:' . $port . $path;
     }
 
     /**

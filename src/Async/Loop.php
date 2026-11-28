@@ -30,6 +30,10 @@ final class Loop
     /** @var array<int, array{0: Curl, 1: \Closure(int): void}> handle id => [curl, onDone] */
     private array $transfers = [];
 
+    /** @var array<int, array{0: int, 1: int, 2: \Closure(int): void}> id => [socket, events, callback] */
+    private array $watchers = [];
+    private int $watcherId = 0;
+
     /** @var \WeakMap<\Fiber, true> coroutines started by this loop */
     private \WeakMap $fibers;
 
@@ -59,6 +63,26 @@ final class Loop
             $this->multi->remove($curl);
             unset($this->transfers[$id]);
         }
+    }
+
+    /**
+     * Call $onReady once when $socket becomes readable or writable
+     * ($events: CurlMulti::WAIT_POLLIN and/or WAIT_POLLOUT). Used by
+     * AsyncWebSocket. Returns an id for unwatchSocket().
+     *
+     * @param \Closure(int): void $onReady gets the events that fired
+     */
+    public function watchSocket(int $socket, int $events, \Closure $onReady): int
+    {
+        $id = ++$this->watcherId;
+        $this->watchers[$id] = [$socket, $events, $onReady];
+
+        return $id;
+    }
+
+    public function unwatchSocket(int $id): void
+    {
+        unset($this->watchers[$id]);
     }
 
     public function activeTransfers(): int
@@ -151,7 +175,13 @@ final class Loop
                 $progress = true;
             }
             $progress = $this->runReady() || $progress;
-            if (!$progress && $this->transfers !== []) {
+        }
+
+        if ($this->transfers !== [] || $this->watchers !== []) {
+            $busy = $progress || !$this->ready->isEmpty();
+            if ($this->watchers !== []) {
+                $this->pollWatchers($busy ? 0 : $this->pollTimeoutMs());
+            } elseif (!$busy) {
                 $this->multi->poll($this->pollTimeoutMs());
             }
 
@@ -189,8 +219,28 @@ final class Loop
         }
         $this->transfers = [];
         $this->timers = [];
+        $this->watchers = [];
         $this->ready = new \SplQueue();
         $this->multi->close();
+    }
+
+    /** Wait for transfers and watched sockets, then call the watchers whose socket is ready. */
+    private function pollWatchers(int $timeoutMs): void
+    {
+        $ids = array_keys($this->watchers);
+        $fds = [];
+        foreach ($this->watchers as [$socket, $events]) {
+            $fds[] = [$socket, $events];
+        }
+        $revents = $this->multi->poll($timeoutMs, $fds);
+        foreach ($ids as $i => $id) {
+            $fired = $revents[$i] ?? 0;
+            if ($fired !== 0 && isset($this->watchers[$id])) {
+                $onReady = $this->watchers[$id][2];
+                unset($this->watchers[$id]);
+                $onReady($fired);
+            }
+        }
     }
 
     private function runReady(): bool
