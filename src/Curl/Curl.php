@@ -32,6 +32,8 @@ class Curl
     /** Options whose value is a list of strings sent as a curl_slist. */
     private const SLIST_OPTIONS = [
         CurlOpt::HTTPHEADER,
+        CurlOpt::HTTP3_HTTPHEADER,
+        CurlOpt::WS_HTTPHEADER,
         CurlOpt::PROXYHEADER,
         CurlOpt::RESOLVE,
         CurlOpt::CONNECT_TO,
@@ -44,7 +46,7 @@ class Curl
     ];
 
     /** Slists freed by perform(clearHeaders: true). */
-    private const HEADER_OPTIONS = [CurlOpt::HTTPHEADER, CurlOpt::PROXYHEADER];
+    private const HEADER_OPTIONS = [CurlOpt::HTTPHEADER, CurlOpt::HTTP3_HTTPHEADER, CurlOpt::WS_HTTPHEADER, CurlOpt::PROXYHEADER];
 
     /** Slists freed by perform(clearResolve: true). */
     private const RESOLVE_OPTIONS = [CurlOpt::RESOLVE, CurlOpt::CONNECT_TO];

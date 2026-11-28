@@ -115,6 +115,38 @@ final class FingerprintTest extends TestCase
         }
     }
 
+    public function testCustomJa3AndAkamaiMatchPythonCurlCffi(): void
+    {
+        if (!Library::supportsImpersonation()) {
+            self::markTestSkipped('libcurl-impersonate is not loaded');
+        }
+        $refFile = getenv('CURL_CFFI_FP_REFERENCE');
+        if (!is_string($refFile) || !is_file($refFile)) {
+            self::markTestSkipped('Set CURL_CFFI_FP_REFERENCE to the output of python_reference.py');
+        }
+        $reference = json_decode((string) file_get_contents($refFile), true, 512, JSON_THROW_ON_ERROR);
+        if (!isset($reference['custom'])) {
+            self::markTestSkipped('No Python reference for the custom fingerprint');
+        }
+        $custom = json_decode((string) file_get_contents(__DIR__ . '/custom.json'), true, 512, JSON_THROW_ON_ERROR);
+
+        // Same call as python_reference.py: requests.get(URL, ja3=..., akamai=..., extra_fp=...)
+        $php = \CurlCffi\Requests\Requests::get(
+            self::ECHO_URL,
+            ja3: $custom['ja3'],
+            akamai: $custom['akamai'],
+            extra_fp: $custom['extra_fp'],
+            timeout: 30,
+        )->json();
+        $py = $reference['custom'];
+
+        // A fixed extension order makes even the JA3 hash stable.
+        self::assertSame($py['ja3_hash'], $php['ja3_hash'], 'JA3 differs');
+        self::assertSame($py['ja4'], $php['ja4'], 'JA4 differs');
+        self::assertSame($py['akamai_hash'], $php['akamai_hash'], 'HTTP/2 fingerprint differs');
+        self::assertSame($py['peetprint_hash'] ?? null, $php['peetprint_hash'] ?? null, 'peetprint differs');
+    }
+
     /** @return array<string, mixed> */
     public static function fetch(string $target): array
     {
