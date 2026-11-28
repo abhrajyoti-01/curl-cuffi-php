@@ -56,14 +56,14 @@ final class AsyncSessionTest extends TestCase
     {
         $s = new AsyncSession();
         $start = microtime(true);
-        $rs = $s->gather(array_map(fn () => $s->get(self::url('/delay?s=0.5')), range(1, 5)));
+        $rs = $s->gather(array_map(fn () => $s->get(LocalServer::delayUrl(0.5)), range(1, 5)));
         $elapsed = microtime(true) - $start;
 
         self::assertCount(5, $rs);
         foreach ($rs as $r) {
             self::assertSame('done', $r->text);
         }
-        self::assertLessThan(2.0, $elapsed, 'five 0.5s requests should overlap, not take 2.5s');
+        self::assertLessThan(1.0, $elapsed, 'five 0.5s requests should overlap, not take 2.5s');
     }
 
     public function testMaxClientsLimitsConcurrency(): void
@@ -71,11 +71,12 @@ final class AsyncSessionTest extends TestCase
         $s = new AsyncSession(max_clients: 2);
         self::assertSame(2, $s->maxClients);
         $start = microtime(true);
-        $rs = $s->gather(array_map(fn () => $s->get(self::url('/delay?s=0.4')), range(1, 4)));
+        $rs = $s->gather(array_map(fn () => $s->get(LocalServer::delayUrl(0.4)), range(1, 4)));
         $elapsed = microtime(true) - $start;
 
         self::assertCount(4, $rs);
         self::assertGreaterThan(0.75, $elapsed, 'four requests, two at a time, take two rounds');
+        self::assertLessThan(1.2, $elapsed, 'but not four');
 
         $this->expectException(\InvalidArgumentException::class);
         new AsyncSession(maxClients: 0);
@@ -103,7 +104,7 @@ final class AsyncSessionTest extends TestCase
     {
         $s = new AsyncSession();
         $task = function (string $name) use ($s): string {
-            $first = $s->get(self::url('/delay?s=0.5'))->await();
+            $first = $s->get(LocalServer::delayUrl(0.5))->await();
             $s->sleep(0.05)->await();
             $second = $s->get(self::url('/echo'), params: ['name' => $name])->await();
 
@@ -125,7 +126,7 @@ final class AsyncSessionTest extends TestCase
         $s = new AsyncSession();
         $caught = $s->run(function () use ($s): string {
             try {
-                $s->get(self::url('/delay?s=2'), timeout: 0.2)->await();
+                $s->get(LocalServer::delayUrl(2), timeout: 0.2)->await();
 
                 return 'no error';
             } catch (Timeout $e) {
@@ -243,7 +244,7 @@ final class AsyncSessionTest extends TestCase
     public function testCloseRejectsUnfinishedRequests(): void
     {
         $s = new AsyncSession(max_clients: 1);
-        $running = $s->get(self::url('/delay?s=2'));
+        $running = $s->get(LocalServer::delayUrl(2));
         $queued = $s->get(self::url('/echo'));
         $s->loop()->tick();
         $start = microtime(true);
