@@ -120,9 +120,12 @@ final class CurlMulti
         $this->multi = null;
     }
 
+    /** The pointer's value, to use as an array key. */
     private static function address(CData $pointer): int
     {
-        return (int) Library::ffi()->cast('uintptr_t', $pointer)->cdata;
+        // cast('uintptr_t', $pointer) would read the memory it points to
+        // (for a CURL handle, its magic number), not the address itself.
+        return (int) Library::ffi()->cast('uintptr_t*', FFI::addr($pointer))[0];
     }
 
     private function check(int $code, string $action): void

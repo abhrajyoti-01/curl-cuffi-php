@@ -70,6 +70,45 @@ try {
 }
 ```
 
+### Async
+
+`AsyncSession` runs many requests at once on one `curl_multi` handle, like Python's
+`AsyncSession`. Its methods return a `Promise`; `await()` gives the `Response` or throws.
+Coroutines are PHP Fibers, so no extension or event-loop library is needed.
+
+```php
+use CurlCffi\Requests\AsyncSession;
+
+$s = new AsyncSession(impersonate: 'chrome', max_clients: 10);
+
+// await s.get(url)
+$r = $s->get('https://example.com')->await();
+
+// await asyncio.gather(*[s.get(u) for u in urls]); keys are kept
+$responses = $s->gather(array_map(fn ($u) => $s->get($u), $urls));
+$results = $s->gather(['a' => $s->get($a), 'b' => $s->get($b)], returnExceptions: true);
+
+// async def ...: coroutines that await one step after another
+$task = function (string $user) use ($s) {
+    $s->post('https://example.com/login', data: ['user' => $user])->await();
+    $s->sleep(0.5)->await();                       // await asyncio.sleep(0.5)
+
+    return $s->get('https://example.com/me')->await()->json();
+};
+$profiles = $s->run(fn () => $s->gather([fn () => $task('ann'), fn () => $task('bob')]));
+
+// callbacks, if you prefer them
+$s->get($url)->then(fn ($r) => print($r->statusCode))->catch(fn ($e) => print($e->getMessage()));
+$s->loop()->run();                                 // run until everything has finished
+
+$s->close();                                       // unfinished requests reject with SessionClosed
+```
+
+At most `max_clients` transfers run at once; the rest wait their turn. Cookies, headers,
+`retry`, `raise_for_status` and every other session option work as in `Session`. Each promise's
+`await()` inside a coroutine (`run()` or `spawn()`) suspends only that coroutine; anywhere else it
+runs the loop until the result is ready.
+
 Options are passed as PHP named arguments with the same names as Python (`allow_redirects`,
 `max_redirects`, `proxy_auth`, `default_headers`, ...). camelCase spellings (`allowRedirects`) work
 too. Unknown options throw a `TypeError`, like Python.
@@ -88,6 +127,13 @@ too. Unknown options throw a `TypeError`, like Python.
 | `r.raise_for_status()`, `r.iter_lines()` | `$r->raiseForStatus()`, `$r->iterLines()` |
 | `CurlMime()` + `multipart=` | `new CurlMime()` + `multipart:` |
 | `RetryStrategy(count=3, delay=1)` | `new RetryStrategy(count: 3, delay: 1)` |
+| `s = AsyncSession(max_clients=10)` | `$s = new AsyncSession(max_clients: 10)` |
+| `r = await s.get(url)` | `$r = $s->get($url)->await()` |
+| `await asyncio.gather(*tasks)` | `$s->gather($promisesOrClosures)` |
+| `asyncio.gather(..., return_exceptions=True)` | `$s->gather($items, returnExceptions: true)` |
+| `asyncio.run(main())` | `$s->run($main)` |
+| `asyncio.create_task(coro())` | `$s->spawn($fn)` |
+| `await asyncio.sleep(1)` | `$s->sleep(1)->await()` |
 | `curl_cffi.requests.exceptions.*` | `CurlCffi\Requests\Exceptions\*` |
 
 Response properties also answer to their Python names (`$r->status_code`, `$r->raise_for_status()`).
@@ -95,7 +141,10 @@ Response properties also answer to their Python names (`$r->status_code`, `$r->r
 Differences from Python:
 
 - PHP has no threads. Streaming runs on `curl_multi` in the same process; read the body with
-  `iterContent()`, `iterLines()` or `read()`, then `close()`.
+  `iterContent()`, `iterLines()` or `read()`, then `close()`. In `AsyncSession`, reading a streamed
+  body blocks the loop, as Python's sync iteration would.
+- There is no `async`/`await` syntax: call `->await()` on a promise, and give coroutines as
+  closures to `run()`, `spawn()` or `gather()`.
 - `files:` is a PHP shortcut for simple uploads (`['field' => '/path']` or
   `['field' => ['data' => '...', 'filename' => 'a.txt', 'content_type' => 'text/plain']]`).
   Python only has `multipart=`, which works here too.
@@ -127,7 +176,7 @@ and values as curl_cffi, including the impersonation options such as `CurlOpt::H
 
 1. Core binding: FFI loader, installer, `Curl`, constants (done)
 2. `Requests::get()`, `Session`, `Response`, cookies, redirects, proxies, multipart, streaming (done)
-3. `AsyncSession` on `curl_multi` + PHP Fibers
+3. `AsyncSession` on `curl_multi` + PHP Fibers (done)
 4. Custom `ja3` / `akamai` / `extra_fp`, `WebSocket`
 5. Parity test suite, CI on Linux/macOS/Windows, Packagist release
 
@@ -140,7 +189,8 @@ php bin/curl-cffi-install && composer test       # against libcurl-impersonate
 ```
 
 CI also runs `tests/Fingerprint`, which compares the JA4 and HTTP/2 fingerprints PHP sends with
-what Python curl_cffi sends for the same browser targets.
+what Python curl_cffi sends for the same browser targets, through `Curl`, `Requests` and
+`AsyncSession`.
 
 ## License
 

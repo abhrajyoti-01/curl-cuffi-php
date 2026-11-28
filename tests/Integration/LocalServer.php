@@ -4,45 +4,75 @@ declare(strict_types=1);
 
 namespace CurlCffi\Tests\Integration;
 
-/** Runs `php -S` with tests/fixtures/server.php for the duration of a test class. */
+/**
+ * Local servers for the integration tests, started on first use and stopped
+ * at shutdown:
+ *  - url(): `php -S` with tests/fixtures/server.php (echo, cookies, redirects, ...)
+ *  - delayUrl(): tests/fixtures/delay_server.php, which serves any number of
+ *    `/delay?s=X` requests at the same time, for timing tests
+ */
 final class LocalServer
 {
-    /** @var resource|null */
-    private static $process = null;
-    private static int $port = 0;
+    /** @var array<string, int> server name => port */
+    private static array $ports = [];
+
+    /** @var list<resource> */
+    private static array $processes = [];
 
     public static function url(string $path = '/'): string
     {
-        if (self::$process === null) {
-            self::start();
-        }
+        $fixture = dirname(__DIR__) . '/fixtures/server.php';
+        // Several workers, so a request that hangs (like /flaky) does not hold
+        // up the next one. One worker can still serve two connections one
+        // after the other, so timing tests use delayUrl() instead.
+        $port = self::$ports['echo'] ??= self::start(
+            static fn (int $port) => [PHP_BINARY, '-S', '127.0.0.1:' . $port, $fixture],
+            ['PHP_CLI_SERVER_WORKERS' => '8'],
+        );
 
-        return 'http://127.0.0.1:' . self::$port . $path;
+        return 'http://127.0.0.1:' . $port . $path;
     }
 
-    private static function start(): void
+    /** URL of `/delay?s=$seconds` on a server that answers all requests concurrently. */
+    public static function delayUrl(float $seconds): string
+    {
+        $fixture = dirname(__DIR__) . '/fixtures/delay_server.php';
+        $port = self::$ports['delay'] ??= self::start(static fn (int $port) => [PHP_BINARY, $fixture, (string) $port]);
+
+        return 'http://127.0.0.1:' . $port . '/delay?s=' . $seconds;
+    }
+
+    /**
+     * @param \Closure(int): list<string> $command
+     * @param array<string, string>       $env
+     */
+    private static function start(\Closure $command, array $env = []): int
     {
         $socket = stream_socket_server('tcp://127.0.0.1:0');
         $name = stream_socket_get_name($socket, false);
         fclose($socket);
-        self::$port = (int) substr((string) $name, strrpos((string) $name, ':') + 1);
+        $port = (int) substr((string) $name, strrpos((string) $name, ':') + 1);
 
-        $router = dirname(__DIR__) . '/fixtures/server.php';
-        $cmd = [PHP_BINARY, '-S', '127.0.0.1:' . self::$port, $router];
         $null = PHP_OS_FAMILY === 'Windows' ? 'NUL' : '/dev/null';
-        self::$process = proc_open($cmd, [1 => ['file', $null, 'w'], 2 => ['file', $null, 'w']], $pipes);
+        $process = proc_open($command($port), [1 => ['file', $null, 'w'], 2 => ['file', $null, 'w']], $pipes, null, getenv() + $env);
+        if ($process === false) {
+            throw new \RuntimeException('Could not start test server');
+        }
+        if (self::$processes === []) {
+            register_shutdown_function(static function (): void {
+                foreach (self::$processes as $p) {
+                    proc_terminate($p);
+                }
+            });
+        }
+        self::$processes[] = $process;
 
         for ($i = 0; $i < 50; $i++) {
-            $conn = @fsockopen('127.0.0.1', self::$port, $errno, $errstr, 0.1);
+            $conn = @fsockopen('127.0.0.1', $port, $errno, $errstr, 0.1);
             if ($conn) {
                 fclose($conn);
-                register_shutdown_function(static function (): void {
-                    if (self::$process !== null) {
-                        proc_terminate(self::$process);
-                    }
-                });
 
-                return;
+                return $port;
             }
             usleep(100_000);
         }
