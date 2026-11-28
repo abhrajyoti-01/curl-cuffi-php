@@ -177,7 +177,7 @@ final class AsyncSessionTest extends TestCase
     {
         $key = bin2hex(random_bytes(6));
         $s = new AsyncSession(retry: new RetryStrategy(count: 1, delay: 0.05), timeout: 0.5);
-        $r = $s->get(self::url("/flaky?key={$key}&fails=1"))->await();
+        $r = $s->get(LocalServer::flakyUrl($key))->await();
         self::assertSame(['calls' => 2], $r->json(), 'the first call timed out, the retry succeeded');
 
         $s = new AsyncSession(retry: 2);
@@ -186,6 +186,17 @@ final class AsyncSessionTest extends TestCase
         self::assertInstanceOf(ConnectionError::class, $rs[0]);
         self::assertSame(200, $rs[1]->statusCode);
         self::assertLessThan(2.0, microtime(true) - $start);
+    }
+
+    public function testUpkeep(): void
+    {
+        $s = new AsyncSession();
+        self::assertSame([], $s->upkeep()->await(), 'no idle handles yet');
+        $s->gather([$s->get(self::url('/echo')), $s->get(self::url('/echo'))]);
+        self::assertSame([0, 0], $s->upkeep()->await(), 'one result per idle handle');
+        $s->close();
+        $this->expectException(SessionClosed::class);
+        $s->upkeep();
     }
 
     public function testCookiesAreShared(): void

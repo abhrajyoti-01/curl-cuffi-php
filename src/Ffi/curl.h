@@ -53,6 +53,7 @@ CURL *curl_easy_duphandle(CURL *curl);
 void curl_easy_reset(CURL *curl);
 const char *curl_easy_strerror(CURLcode code);
 CURLcode curl_easy_pause(CURL *handle, int bitmask);
+CURLcode curl_easy_upkeep(CURL *curl);
 
 struct curl_slist *curl_slist_append(struct curl_slist *list, const char *data);
 void curl_slist_free_all(struct curl_slist *list);

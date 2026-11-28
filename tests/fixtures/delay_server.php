@@ -3,7 +3,11 @@
 //
 // GET /delay?s=X answers "done" after X seconds without holding up any other
 // connection. `php -S` cannot promise that: one worker may accept two
-// connections at once and serve them one after the other.
+// connections at once and serve them one after the other, and on Windows it
+// has only one worker.
+//
+// GET /flaky?key=K&fails=N hangs for 3 seconds on the first N calls with key K,
+// then answers {"calls": n} at once, for retry tests.
 
 $port = (int) ($argv[1] ?? 0);
 $server = stream_socket_server("tcp://127.0.0.1:{$port}", $errno, $errstr);
@@ -15,6 +19,8 @@ stream_set_blocking($server, false);
 
 /** @var array<int, array{conn: resource, buf: string, due: ?float, out: string}> */
 $clients = [];
+/** @var array<string, int> calls to /flaky per key */
+$flaky = [];
 
 while (true) {
     $now = microtime(true);
@@ -59,9 +65,19 @@ while (true) {
         }
         $target = explode(' ', strtok($clients[$id]['buf'], "\r\n"))[1] ?? '/';
         parse_str((string) parse_url($target, PHP_URL_QUERY), $query);
-        $body = 'done';
-        $clients[$id]['due'] = microtime(true) + max(0.0, (float) ($query['s'] ?? 1));
-        $clients[$id]['out'] = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: "
+        if (parse_url($target, PHP_URL_PATH) === '/flaky') {
+            $key = (string) ($query['key'] ?? 'x');
+            $calls = $flaky[$key] = ($flaky[$key] ?? 0) + 1;
+            $body = json_encode(['calls' => $calls]);
+            $type = 'application/json';
+            $delay = $calls <= (int) ($query['fails'] ?? 1) ? 3.0 : 0.0;
+        } else {
+            $body = 'done';
+            $type = 'text/plain';
+            $delay = max(0.0, (float) ($query['s'] ?? 1));
+        }
+        $clients[$id]['due'] = microtime(true) + $delay;
+        $clients[$id]['out'] = "HTTP/1.1 200 OK\r\nContent-Type: {$type}\r\nContent-Length: "
             . strlen($body) . "\r\nConnection: close\r\n\r\n" . $body;
     }
 

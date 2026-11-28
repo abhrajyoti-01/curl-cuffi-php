@@ -14,6 +14,7 @@ use CurlCffi\Impersonate\ExtraFingerprints;
 use CurlCffi\Impersonate\Fingerprint;
 use CurlCffi\Impersonate\FingerprintOptions;
 use CurlCffi\Requests\Exceptions\ImpersonateError;
+use CurlCffi\Warnings;
 use PHPUnit\Framework\TestCase;
 
 /** Checks which curl options each fingerprint input turns into, as curl_cffi's utils.py does. */
@@ -65,9 +66,16 @@ final class FingerprintOptionsTest extends TestCase
             return true;
         });
         try {
+            // Silent by default, as Python's config_warnings(on=False) on import
+            $c = new RecordingCurl();
+            FingerprintOptions::setJa3Options($c, str_replace(',29-23', '-21,29-23', self::JA3));
+            self::assertSame([], $warnings);
+
+            Warnings::config(on: true);
             $c = new RecordingCurl();
             FingerprintOptions::setJa3Options($c, str_replace(',29-23', '-21,29-23', self::JA3));
         } finally {
+            Warnings::config(on: false);
             restore_error_handler();
         }
         self::assertSame('0-23-65281-10-11-35-16-5-13-51-45-43', $c->options[CurlOpt::TLS_EXTENSION_ORDER]);

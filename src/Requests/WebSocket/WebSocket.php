@@ -14,6 +14,7 @@ use CurlCffi\Requests\Exceptions\WebSocketError;
 use CurlCffi\Requests\Exceptions\WebSocketTimeout;
 use CurlCffi\Requests\Options;
 use CurlCffi\Requests\Session;
+use CurlCffi\Warnings;
 
 /**
  * Synchronous WebSocket client, like curl_cffi.requests.WebSocket. It uses
@@ -584,10 +585,10 @@ final class WebSocket extends BaseWebSocket implements \IteratorAggregate
                 try {
                     $onError($this, $e);
                 } catch (\Throwable $inner) {
-                    trigger_error("WebSocket 'on_error' callback failed: {$inner->getMessage()}", E_USER_WARNING);
+                    Warnings::warn("WebSocket 'on_error' callback failed: {$inner->getMessage()}");
                 }
             } else {
-                trigger_error("WebSocket callback '{$event}' failed: {$e->getMessage()}", E_USER_WARNING);
+                Warnings::warn("WebSocket callback '{$event}' failed: {$e->getMessage()}");
             }
         }
     }

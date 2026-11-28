@@ -51,18 +51,6 @@ if ($path === '/delay') {
     echo 'done';
     exit;
 }
-if ($path === '/flaky') {
-    // Hangs (so the client times out) for the first `fails` calls with this key.
-    $file = sys_get_temp_dir() . '/curl-cffi-flaky-' . preg_replace('/\W/', '', (string) ($_GET['key'] ?? 'x'));
-    $calls = (int) @file_get_contents($file) + 1;
-    file_put_contents($file, (string) $calls);
-    if ($calls <= (int) ($_GET['fails'] ?? 1)) {
-        sleep(3);
-    }
-    header('Content-Type: application/json');
-    echo json_encode(['calls' => $calls]);
-    exit;
-}
 if ($path === '/fp/fingerprints') {
     // Two pages of the fingerprint service, for FingerprintManager::updateFingerprints()
     header('Content-Type: application/json');

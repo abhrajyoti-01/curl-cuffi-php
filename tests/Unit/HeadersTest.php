@@ -48,4 +48,18 @@ final class HeadersTest extends TestCase
         self::assertSame(['a=1', 'b=2'], $h->getList('set-cookie'));
         self::assertCount(2, $h);
     }
+
+    public function testPythonViews(): void
+    {
+        $h = new Headers([['Accept', 'a'], ['X-Many', '1'], ['x-many', '2']]);
+        self::assertSame(['Accept' => 'a', 'X-Many' => '1, 2'], $h->items());
+        self::assertSame(['a', '1, 2'], $h->values());
+        self::assertSame([['Accept', 'a'], ['X-Many', '1'], ['x-many', '2']], $h->raw());
+
+        self::assertSame('ascii', $h->encoding());
+        self::assertSame('utf-8', (new Headers(['X' => "caf\u{e9}"]))->encoding());
+        self::assertSame('iso-8859-1', (new Headers(['X' => "caf\xe9"]))->encoding());
+        $h->setEncoding('utf-8');
+        self::assertSame('utf-8', $h->encoding());
+    }
 }

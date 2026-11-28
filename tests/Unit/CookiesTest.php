@@ -60,4 +60,27 @@ final class CookiesTest extends TestCase
         $jar->updateFromCurlChanges(["DELETE\texample.com\tFALSE\t/\tFALSE\t0\tnew\tv"]);
         self::assertNull($jar->get('new'));
     }
+
+    public function testSecureAndHostPrefixesAsInBrowsers(): void
+    {
+        $jar = new Cookies();
+        $jar->set('__Secure-a', '1');
+        $jar->set('__Host-b', '2', 'example.com', '/app');
+        $byName = [];
+        foreach ($jar->all() as $c) {
+            $byName[$c->name] = $c;
+        }
+        self::assertTrue($byName['__Secure-a']->secure);
+        self::assertTrue($byName['__Host-b']->secure);
+        self::assertSame('', $byName['__Host-b']->domain);
+        self::assertSame('/', $byName['__Host-b']->path);
+    }
+
+    public function testFromSetCookieHeaders(): void
+    {
+        $jar = Cookies::fromSetCookieHeaders(['a=1; Path=/x; Domain=example.com; Secure; HttpOnly', 'bad', null, 'b=2']);
+        self::assertSame(['a' => '1', 'b' => '2'], $jar->getDict());
+        $a = $jar->all()[0];
+        self::assertSame(['/x', 'example.com', true], [$a->path, $a->domain, $a->secure]);
+    }
 }

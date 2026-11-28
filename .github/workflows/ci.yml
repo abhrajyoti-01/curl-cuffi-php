@@ -3,11 +3,16 @@ name: CI
 on:
   push:
     branches: [main]
+    tags: ['v*']
   pull_request:
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
-  tests:
-    name: PHP ${{ matrix.php }}
+  linux:
+    name: Linux x86_64, PHP ${{ matrix.php }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -20,25 +25,64 @@ jobs:
           php-version: ${{ matrix.php }}
           extensions: ffi, zlib, openssl
           ini-values: ffi.enable=1
+      - run: composer validate --strict
       - run: composer install --no-interaction --no-progress
-      - name: Unit and integration tests against stock libcurl
-        run: CURL_CFFI_LIBRARY=libcurl.so.4 vendor/bin/phpunit
+      - name: All tests against stock libcurl
+        run: CURL_CFFI_LIBRARY=libcurl.so.4 php vendor/bin/phpunit
       - name: Download libcurl-impersonate
         run: php bin/curl-cffi-install
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Integration tests against libcurl-impersonate
-        run: vendor/bin/phpunit --testsuite integration
+        run: php vendor/bin/phpunit --testsuite integration
+
+  platforms:
+    name: ${{ matrix.name }}, PHP ${{ matrix.php }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: Linux arm64, os: ubuntu-24.04-arm, php: '8.4' }
+          - { name: macOS arm64, os: macos-latest, php: '8.1' }
+          - { name: macOS arm64, os: macos-latest, php: '8.4' }
+          - { name: macOS x86_64, os: macos-15-intel, php: '8.4' }
+          - { name: Windows x86_64, os: windows-latest, php: '8.1' }
+          - { name: Windows x86_64, os: windows-latest, php: '8.4' }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: ffi, zlib, openssl, zip
+          ini-values: ffi.enable=1
+      - run: composer install --no-interaction --no-progress
+      - name: Download libcurl-impersonate
+        run: php bin/curl-cffi-install
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Show the loaded library
+        run: >-
+          php -r 'require "vendor/autoload.php"; use CurlCffi\Ffi\Library, CurlCffi\Ffi\Platform;
+          echo Platform::id(), PHP_EOL, Library::version(), PHP_EOL, Library::loadedPath(), PHP_EOL,
+          "impersonate: ", var_export(Library::supportsImpersonation(), true),
+          ", ws: ", var_export(Library::supportsWebSocket(), true), PHP_EOL;'
+      - name: Unit, parity and integration tests against libcurl-impersonate
+        run: php vendor/bin/phpunit --display-skipped
 
   fingerprint:
-    name: Fingerprint parity with Python curl_cffi
-    runs-on: ubuntu-latest
+    name: Fingerprint parity with Python curl_cffi (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
       - uses: shivammathur/setup-php@v2
         with:
           php-version: '8.3'
-          extensions: ffi
+          extensions: ffi, zip
           ini-values: ffi.enable=1
       - uses: actions/setup-python@v5
         with:
@@ -50,6 +94,20 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Compare PHP fingerprints with Python's
-        run: vendor/bin/phpunit --testsuite fingerprint --group network --display-skipped
+        run: php vendor/bin/phpunit --testsuite fingerprint --group network --display-skipped
         env:
           CURL_CFFI_FP_REFERENCE: ${{ runner.temp }}/reference.json
+
+  api-reference:
+    name: API parity reference is current
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install "curl_cffi==$(cat tests/Parity/CURL_CFFI_VERSION)"
+      - name: Regenerate tests/Parity/python_api.json from the installed curl_cffi
+        run: python -I tests/Parity/python_api.py > "$RUNNER_TEMP/python_api.json"
+      - name: Compare with the committed copy
+        run: diff -u tests/Parity/python_api.json "$RUNNER_TEMP/python_api.json"

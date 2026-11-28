@@ -17,6 +17,7 @@ use CurlCffi\Requests\Exceptions\JSONDecodeError;
  *
  * @property-read string      $text            body decoded to UTF-8
  * @property      string      $encoding        encoding used for $text
+ * @property      string      $charset         same as $encoding
  * @property-read ?string     $charsetEncoding charset from the Content-Type header
  * @property-read bool        $isRedirect
  */

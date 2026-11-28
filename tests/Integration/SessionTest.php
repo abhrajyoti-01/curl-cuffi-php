@@ -19,6 +19,7 @@ use CurlCffi\Requests\Requests;
 use CurlCffi\Requests\Response;
 use CurlCffi\Requests\RetryStrategy;
 use CurlCffi\Requests\Session;
+use CurlCffi\Warnings;
 use PHPUnit\Framework\TestCase;
 
 final class SessionTest extends TestCase
@@ -280,6 +281,18 @@ final class SessionTest extends TestCase
         self::assertSame(302, $r->statusCode);
     }
 
+    public function testOwnCurlHandleAndUpkeep(): void
+    {
+        $curl = new \CurlCffi\Curl\Curl();
+        $s = new Session(curl: $curl);
+        self::assertSame($curl, $s->curl());
+        self::assertSame(200, $s->get(self::url('/echo'))->statusCode);
+        self::assertSame(0, $s->upkeep());
+
+        $this->expectException(\TypeError::class);
+        new Session(curl: 'not a handle');
+    }
+
     public function testClosedSession(): void
     {
         $s = new Session();
@@ -339,7 +352,7 @@ final class SessionTest extends TestCase
         $r = Requests::get(self::url('/echo'), impersonate: $fp, default_headers: false);
         self::assertArrayNotHasKey('X-Fp', $r->json()['headers']);
 
-        // Mixing impersonate with ja3 warns, as in Python.
+        // Mixing impersonate with ja3 warns once warnings are on, as in Python.
         $warning = null;
         set_error_handler(static function (int $no, string $msg) use (&$warning): bool {
             $warning = $msg;
@@ -348,7 +361,11 @@ final class SessionTest extends TestCase
         }, E_USER_WARNING);
         try {
             Requests::get(self::url('/echo'), impersonate: 'chrome', ja3: $ja3);
+            self::assertNull($warning, 'off by default');
+            Warnings::config(on: true);
+            Requests::get(self::url('/echo'), impersonate: 'chrome', ja3: $ja3);
         } finally {
+            Warnings::config(on: false);
             restore_error_handler();
         }
         self::assertSame('JA3 fingerprint was altered after impersonated version was set.', $warning);

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace CurlCffi\Requests;
 
 use CurlCffi\Requests\Exceptions\CookieConflict;
+use CurlCffi\Warnings;
 
 /**
  * A cookie jar, like curl_cffi.requests.Cookies.
@@ -28,9 +29,58 @@ final class Cookies implements \ArrayAccess, \IteratorAggregate, \Countable
         $this->update($cookies);
     }
 
+    /**
+     * Set a cookie. As in Python and browsers, `__Secure-` cookies are always
+     * secure, and `__Host-` cookies are secure, host-only and on path "/".
+     */
     public function set(string $name, string $value, string $domain = '', string $path = '/', bool $secure = false): void
     {
+        if (str_starts_with($name, '__Secure-') && !$secure) {
+            Warnings::warn('`secure` changed to True for `__Secure-` prefixed cookies');
+            $secure = true;
+        } elseif (str_starts_with($name, '__Host-') && (!$secure || $domain !== '' || $path !== '/')) {
+            Warnings::warn('`host` changed to True, `domain` removed, `path` changed to `/` for `__Host-` prefixed cookies');
+            $secure = true;
+            $domain = '';
+            $path = '/';
+        }
         $this->setCookie(new Cookie($name, $value, $domain, $path, $secure));
+    }
+
+    /**
+     * Cookies from Set-Cookie header values (without the "Set-Cookie:" name).
+     *
+     * @param list<?string> $headers
+     */
+    public static function fromSetCookieHeaders(array $headers): self
+    {
+        $jar = new self();
+        foreach ($headers as $header) {
+            if ($header === null) {
+                continue;
+            }
+            $parts = array_map('trim', explode(';', $header));
+            $first = array_shift($parts);
+            if ($first === null || !str_contains($first, '=')) {
+                continue;
+            }
+            [$name, $value] = explode('=', $first, 2);
+            $domain = '';
+            $path = '/';
+            $secure = false;
+            foreach ($parts as $attr) {
+                [$k, $v] = array_pad(explode('=', $attr, 2), 2, '');
+                match (strtolower($k)) {
+                    'domain' => $domain = $v,
+                    'path' => $path = $v !== '' ? $v : '/',
+                    'secure' => $secure = true,
+                    default => null,
+                };
+            }
+            $jar->set(trim($name), trim($value), $domain, $path, $secure);
+        }
+
+        return $jar;
     }
 
     public function setCookie(Cookie $cookie): void

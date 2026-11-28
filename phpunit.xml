@@ -11,6 +11,9 @@
         <testsuite name="integration">
             <directory>tests/Integration</directory>
         </testsuite>
+        <testsuite name="parity">
+            <directory>tests/Parity</directory>
+        </testsuite>
         <testsuite name="fingerprint">
             <directory>tests/Fingerprint</directory>
         </testsuite>
