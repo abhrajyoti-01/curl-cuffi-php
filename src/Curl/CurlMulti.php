@@ -67,14 +67,43 @@ final class CurlMulti
         return $running->cdata;
     }
 
-    /** Wait up to $timeoutMs for activity on any transfer. */
-    public function poll(int $timeoutMs): void
+    public const WAIT_POLLIN = 1;
+    public const WAIT_POLLPRI = 2;
+    public const WAIT_POLLOUT = 4;
+
+    /**
+     * Wait up to $timeoutMs for activity on any transfer or on one of
+     * $extraFds, given as [socket, WAIT_POLLIN|WAIT_POLLOUT] pairs.
+     *
+     * @param list<array{0: int, 1: int}> $extraFds
+     *
+     * @return list<int> the events that fired for each of $extraFds
+     */
+    public function poll(int $timeoutMs, array $extraFds = []): array
     {
         $numfds = $this->ffi->new('int');
+        $count = count($extraFds);
+        $fds = null;
+        $arg = null;
+        if ($count > 0) {
+            $fds = $this->ffi->new("struct curl_waitfd[{$count}]");
+            foreach (array_values($extraFds) as $i => [$fd, $events]) {
+                $fds[$i]->fd = $fd;
+                $fds[$i]->events = $events;
+                $fds[$i]->revents = 0;
+            }
+            $arg = FFI::addr($fds[0]);
+        }
         $this->check(
-            $this->ffi->curl_multi_poll($this->multi, null, 0, $timeoutMs, FFI::addr($numfds)),
+            $this->ffi->curl_multi_poll($this->multi, $arg, $count, $timeoutMs, FFI::addr($numfds)),
             'poll'
         );
+        $revents = [];
+        for ($i = 0; $i < $count; $i++) {
+            $revents[] = (int) $fds[$i]->revents;
+        }
+
+        return $revents;
     }
 
     /**

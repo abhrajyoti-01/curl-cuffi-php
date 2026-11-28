@@ -6,6 +6,7 @@ namespace CurlCffi\Requests;
 
 use CurlCffi\Curl\Curl;
 use CurlCffi\Requests\Exceptions\RequestException;
+use CurlCffi\Requests\WebSocket\WebSocket;
 
 /**
  * A session keeps headers, cookies, connections and settings across
@@ -66,6 +67,34 @@ class Session extends BaseSession
     }
 
     /** Send a request with a streamed body; read it with iterContent()/iterLines(), then close(). */
+    /**
+     * Connect a WebSocket with this session's settings (headers, cookies,
+     * impersonate, proxies, ...), like Python's Session.ws_connect().
+     *
+     * WebSocket options: on_message, on_error, on_open, on_close, on_data,
+     * autoclose, skip_utf8_validation, ws_retry, max_message_size. The rest
+     * are request options for the handshake.
+     */
+    public function wsConnect(string $url, mixed ...$options): WebSocket
+    {
+        $o = Options::normalize($options, Options::WS_CONNECT, 'wsConnect');
+        $this->checkClosed();
+        $wsOptions = array_intersect_key($o, array_flip(Options::WEBSOCKET));
+        $handshake = array_diff_key($o, $wsOptions);
+
+        $curl = new Curl(debug: $this->debug);
+        $ws = new WebSocket(...['curl' => $curl, 'debug' => $this->debug] + $wsOptions);
+        try {
+            $this->wsHandshake($curl, $url, $handshake);
+        } catch (\Throwable $e) {
+            $ws->terminate();
+
+            throw $e;
+        }
+
+        return $ws;
+    }
+
     public function stream(string $method, string $url, mixed ...$options): Response
     {
         $options['stream'] = true;

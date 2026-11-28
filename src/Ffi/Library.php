@@ -19,6 +19,8 @@ final class Library
     private static ?FFI $ffi = null;
     private static ?FFI $impersonateFfi = null;
     private static bool $impersonateChecked = false;
+    private static ?FFI $wsFfi = null;
+    private static bool $wsChecked = false;
     private static ?string $path = null;
     private static ?string $loadedPath = null;
     private static ?string $caBundle = null;
@@ -63,6 +65,10 @@ final class Library
         }
 
         $header = (string) file_get_contents(__DIR__ . '/curl.h');
+        if (PHP_OS_FAMILY === 'Windows') {
+            // curl_socket_t is SOCKET (UINT_PTR) on Windows
+            $header = str_replace('typedef int curl_socket_t;', 'typedef uint64_t curl_socket_t;', $header);
+        }
         $errors = [];
         foreach (self::candidates() as $candidate) {
             try {
@@ -104,6 +110,51 @@ final class Library
         }
 
         return self::$impersonateFfi;
+    }
+
+    /**
+     * FFI instance for the WebSocket API (curl_ws_*), or null when the loaded
+     * libcurl is too old to have it.
+     */
+    public static function wsFfi(): ?FFI
+    {
+        if (self::$wsChecked) {
+            return self::$wsFfi;
+        }
+        self::ffi();
+        self::$wsChecked = true;
+        try {
+            self::$wsFfi = FFI::cdef((string) file_get_contents(__DIR__ . '/ws.h'), (string) self::$loadedPath);
+        } catch (FFI\Exception) {
+            self::$wsFfi = null;
+        }
+
+        return self::$wsFfi;
+    }
+
+    /** Whether the loaded libcurl speaks ws:// and wss:// (libcurl-impersonate does). */
+    public static function supportsWebSocket(): bool
+    {
+        if (self::wsFfi() === null) {
+            return false;
+        }
+        return in_array('ws', self::protocols(), true);
+    }
+
+    /** @return list<string> protocols the loaded libcurl supports, e.g. ["http", "https", "ws", "wss"] */
+    public static function protocols(): array
+    {
+        $info = self::ffi()->curl_version_info(0);
+        $out = [];
+        for ($i = 0; $i < 256; $i++) {
+            $p = $info->protocols[$i];
+            if ($p === null || ($p instanceof FFI\CData && FFI::isNull($p))) {
+                break;
+            }
+            $out[] = is_string($p) ? $p : FFI::string($p);
+        }
+
+        return $out;
     }
 
     public static function supportsImpersonation(): bool
@@ -192,6 +243,8 @@ final class Library
         self::$ffi = null;
         self::$impersonateFfi = null;
         self::$impersonateChecked = false;
+        self::$wsFfi = null;
+        self::$wsChecked = false;
         self::$loadedPath = null;
         self::$path = null;
         self::$caBundle = null;

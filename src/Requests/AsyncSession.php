@@ -11,6 +11,7 @@ use CurlCffi\Curl\CurlError;
 use CurlCffi\Curl\CurlMime;
 use CurlCffi\Requests\Exceptions\RequestException;
 use CurlCffi\Requests\Exceptions\SessionClosed;
+use CurlCffi\Requests\WebSocket\AsyncWebSocket;
 
 /**
  * Concurrent requests on one curl_multi loop, like
@@ -61,6 +62,9 @@ class AsyncSession extends BaseSession
     /** @var \WeakMap<Promise<Response>, true> requests not settled yet */
     private \WeakMap $pending;
 
+    /** @var \WeakMap<AsyncWebSocket, true> */
+    private \WeakMap $websockets;
+
     public function __construct(mixed ...$options)
     {
         $maxClients = 10;
@@ -78,6 +82,7 @@ class AsyncSession extends BaseSession
         $this->loop = new Loop();
         $this->waiting = new \SplQueue();
         $this->pending = new \WeakMap();
+        $this->websockets = new \WeakMap();
     }
 
     public function __destruct()
@@ -136,6 +141,43 @@ class AsyncSession extends BaseSession
         unset($arguments['url'], $arguments[0]);
 
         return $this->request($method, (string) $url, ...$arguments);
+    }
+
+    /**
+     * Connect a WebSocket with this session's settings, like Python's
+     * AsyncSession.ws_connect(). Resolves to an AsyncWebSocket on this
+     * session's loop. Options: autoclose, skip_utf8_validation, ws_retry,
+     * max_message_size, plus request options for the handshake.
+     *
+     * The handshake itself runs synchronously (Python runs it in a thread);
+     * everything after it is non-blocking.
+     *
+     * @return Promise<AsyncWebSocket>
+     */
+    public function wsConnect(string $url, mixed ...$options): Promise
+    {
+        $promise = new Promise($this->loop);
+        try {
+            $o = Options::normalize($options, Options::ASYNC_WS_CONNECT, 'wsConnect');
+            $this->checkClosed();
+            $wsOptions = array_intersect_key($o, array_flip(['autoclose', 'skip_utf8_validation', 'ws_retry', 'max_message_size']));
+            $handshake = array_diff_key($o, $wsOptions);
+            $curl = new Curl(debug: $this->debug);
+            try {
+                $this->wsHandshake($curl, $url, $handshake);
+            } catch (\Throwable $e) {
+                $curl->close();
+
+                throw $e;
+            }
+            $ws = new AsyncWebSocket($this->loop, $curl, ...['debug' => $this->debug] + $wsOptions);
+            $this->websockets[$ws] = true;
+            $promise->resolve($ws);
+        } catch (\Throwable $e) {
+            $promise->reject($e);
+        }
+
+        return $promise;
     }
 
     /** @return Promise<Response> a promise for a streamed response */
@@ -208,6 +250,9 @@ class AsyncSession extends BaseSession
             return;
         }
         $this->closed = true;
+        foreach ($this->websockets as $ws => $_) {
+            $ws->terminate();
+        }
         $this->loop->close();
         $unfinished = [];
         foreach ($this->pending as $promise => $_) {

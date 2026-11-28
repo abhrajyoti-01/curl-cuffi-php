@@ -248,6 +248,50 @@ abstract class BaseSession
     }
 
     /**
+     * WebSocket handshake on $c, for wsConnect() and WebSocket::connect():
+     * the options apply as for a GET request, then curl connects with
+     * CONNECT_ONLY = 2 and keeps the connection for curl_ws_send/recv.
+     * Cookies set by the handshake response go into the session.
+     *
+     * @internal
+     *
+     * @param array<string, mixed> $o normalised Options::WS_HANDSHAKE options
+     */
+    public function wsHandshake(Curl $c, string $url, array $o): Response
+    {
+        $this->checkClosed();
+        // perform() can't be interrupted, so "no timeout" is clamped, as in Python.
+        $timeout = array_key_exists('timeout', $o) ? $o['timeout'] : $this->timeout;
+        $o['timeout'] = $timeout ?? WebSocket\BaseWebSocket::MAX_HANDSHAKE_SECS;
+        $extra = $o['curl_options'] ?? [];
+        unset($o['curl_options']);
+
+        [$request, $buffers, $ownedMime, $injected] = $this->setCurlOptions($c, 'GET', $url, $o, false);
+        foreach ($extra as $option => $value) {
+            $c->setopt((int) $option, $value);
+        }
+        $c->setopt(CurlOpt::TCP_NODELAY, 1);
+        $c->setopt(CurlOpt::CONNECT_ONLY, 2);   // https://curl.se/docs/websocket.html
+
+        $defaultEncoding = $this->defaultEncoding;
+        $discardCookies = $this->discardCookies;
+        try {
+            $c->perform();
+        } catch (CurlError $e) {
+            $rsp = $this->parseResponse($c, $buffers, $request, $defaultEncoding, $discardCookies, $injected);
+            $rsp->request = $request;
+
+            throw RequestException::fromCurlError($e, $rsp);
+        } finally {
+            $ownedMime?->close();
+        }
+        $rsp = $this->parseResponse($c, $buffers, $request, $defaultEncoding, $discardCookies, $injected);
+        $rsp->request = $request;
+
+        return $rsp;
+    }
+
+    /**
      * Port of curl_cffi's set_curl_options(): turn request options plus
      * session defaults into curl options.
      *

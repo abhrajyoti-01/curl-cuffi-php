@@ -9,6 +9,7 @@ typedef int CURLcode;
 typedef int CURLMcode;
 typedef int CURLSHcode;
 typedef int64_t curl_off_t;
+typedef int curl_socket_t; /* SOCKET (64-bit) on Windows: Library swaps this line */
 
 struct curl_slist {
     char *data;
@@ -29,6 +30,19 @@ typedef struct { curl_debug_callback fn; } cffi_debug_holder;
 
 CURLcode curl_global_init(long flags);
 char *curl_version(void);
+/* Leading fields of curl_version_info_data, all present since CURLVERSION_FIRST */
+typedef struct {
+    int age;
+    const char *version;
+    unsigned int version_num;
+    const char *host;
+    int features;
+    const char *ssl_version;
+    long ssl_version_num;
+    const char *libz_version;
+    const char *const *protocols;
+} curl_version_info_data;
+curl_version_info_data *curl_version_info(int age);
 
 CURL *curl_easy_init(void);
 CURLcode curl_easy_setopt(CURL *curl, int option, ...);
@@ -59,6 +73,12 @@ typedef struct {
         CURLcode result;
     } data;
 } CURLMsg;
+/* extra sockets for curl_multi_poll(); events: CURL_WAIT_POLLIN 1, POLLPRI 2, POLLOUT 4 */
+struct curl_waitfd {
+    curl_socket_t fd;
+    short events;
+    short revents;
+};
 CURLMcode curl_multi_perform(CURLM *multi, int *running_handles);
 CURLMcode curl_multi_poll(CURLM *multi, void *extra_fds, unsigned int extra_nfds, int timeout_ms, int *numfds);
 CURLMcode curl_multi_wakeup(CURLM *multi);
