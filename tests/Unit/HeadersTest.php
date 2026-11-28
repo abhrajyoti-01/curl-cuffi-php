@@ -52,7 +52,10 @@ final class HeadersTest extends TestCase
     public function testPythonViews(): void
     {
         $h = new Headers([['Accept', 'a'], ['X-Many', '1'], ['x-many', '2']]);
-        self::assertSame(['Accept' => 'a', 'X-Many' => '1, 2'], $h->items());
+        // Python's keys(), items() and iteration give lowercased names; raw() keeps the case.
+        self::assertSame(['accept' => 'a', 'x-many' => '1, 2'], $h->items());
+        self::assertSame(['accept', 'x-many'], $h->keys());
+        self::assertSame(['accept' => 'a', 'x-many' => '1, 2'], iterator_to_array($h));
         self::assertSame(['a', '1, 2'], $h->values());
         self::assertSame([['Accept', 'a'], ['X-Many', '1'], ['x-many', '2']], $h->raw());
 

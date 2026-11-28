@@ -6,10 +6,9 @@ of [libcurl-impersonate](https://github.com/lexiforest/curl-impersonate) through
 extension. No Python, no compiled PHP extension.
 
 > **Status: milestone 5 of 5.** `Requests`, `Session`, `AsyncSession`, custom fingerprints
-> (`ja3`, `akamai`, `extra_fp`, `perk`, `Fingerprint`), `WebSocket` / `AsyncWebSocket` and the
-> low-level `Curl` class work today, with the response cache, `CurlShare` and
-> `Response::markdown()`, and CI tests them on Linux, macOS and Windows. Still to come: the
-> `curl-cffi` command line tool.
+> (`ja3`, `akamai`, `extra_fp`, `perk`, `Fingerprint`), `WebSocket` / `AsyncWebSocket`, the
+> response cache, `CurlShare`, `Response::markdown()`, the low-level `Curl` class and the
+> `curl-cffi` command line tool all work, and CI tests them on Linux, macOS and Windows.
 
 ## Why not ext-curl?
 
@@ -231,6 +230,41 @@ $b = new AsyncSession(curl_share: $share);  // b reuses a's DNS answers and TLS 
 `markdown()`. It needs two optional packages, as Python needs its `extra` dependencies:
 `composer require fivefilters/readability.php league/html-to-markdown`.
 
+### Command line
+
+`vendor/bin/curl-cffi` is Python's `curl-cffi` command, with the same subcommands, options and
+request items:
+
+```bash
+vendor/bin/curl-cffi get example.com                      # https:// is assumed
+vendor/bin/curl-cffi get :8080/api q==1 X-Token:abc       # http://localhost:8080/api?q=1
+vendor/bin/curl-cffi post httpbin.org/post name=Ann age:=30 +session=xyz -i safari -v
+vendor/bin/curl-cffi post httpbin.org/post -f title=Hi @photo.jpg   # multipart upload
+vendor/bin/curl-cffi get example.com/file.zip -d          # save to file.zip
+vendor/bin/curl-cffi run requests.http                    # or a HAR file exported by a browser
+vendor/bin/curl-cffi doctor                               # versions and paths, for bug reports
+vendor/bin/curl-cffi list                                 # built-in and downloaded fingerprints
+```
+
+| Item | Meaning |
+| --- | --- |
+| `Header:Value` | request header (`Header:` with no value removes it) |
+| `param==value` | query parameter |
+| `field=value` | data field, sent as JSON (default), or with `--form` / `--multipart` as form fields |
+| `field:=json` | raw JSON field, e.g. `n:=1`, `tags:='["a"]'` |
+| `@file` | file upload (multipart field `file`) |
+| `+key=value` | cookie |
+
+Output: response headers and body on a terminal, the body only when piped. `-v` adds the request,
+`--headers` / `--body` pick one part, `-p HBhb` picks any (H/B request headers/body, h/b response
+headers/body), `-q` prints nothing. JSON is pretty-printed, and colored on a terminal (unless
+`NO_COLOR` is set). The exit status is 1 for an error or a response status of 400 or more, and 2
+for a command line that does not parse. `curl-cffi <command> --help` lists every option.
+
+`run` sends each request of an `.http` / `.rest` file (requests separated by `###`, as in
+JetBrains' and VS Code's HTTP clients) or of a HAR archive, through one session so cookies carry
+over (`--no-session` turns that off).
+
 ### Python to PHP
 
 | Python curl_cffi | PHP |
@@ -265,6 +299,7 @@ $b = new AsyncSession(curl_share: $share);  // b reuses a's DNS answers and TLS 
 | `Session(cache=3600)`, `FileCacheBackend(expires=timedelta(days=1))` | `new Session(cache: 3600)`, `new FileCacheBackend(expires: new \DateInterval('P1D'))` |
 | `CurlShare()`, `Session(curl_share=share)` | `new CurlShare()`, `new Session(curl_share: $share)` |
 | `r.markdown()` | `$r->markdown()` |
+| `curl-cffi get example.com` | `vendor/bin/curl-cffi get example.com` |
 
 Response properties also answer to their Python names (`$r->status_code`, `$r->raise_for_status()`).
 
@@ -289,7 +324,14 @@ Differences from Python:
 - `CurlShare` needs no lock callbacks: a PHP request runs on one thread.
 - `markdown()` uses readability.php and league/html-to-markdown instead of Python's
   readability-lxml and markdownify, so whitespace and list markers can differ slightly.
-- Not yet: the `curl-cffi` command line tool. `thread=` (eventlet/gevent) has no PHP equivalent.
+- `thread=` (eventlet/gevent) has no PHP equivalent.
+- The `curl-cffi` command fixes a few gaps of Python's: `@file` and `--multipart` send real
+  multipart/form-data (Python's help promises it, but its `files` path raises and `--multipart`
+  sends the fields URL-encoded); `Header:` removes the header (Python parses it, then drops it);
+  `-o PATH` writes to PATH as given (Python keeps only the file name); `update` exits with 1 when
+  it fails; `run` takes `.rest` files, as Python's help says. Options and items can come in any
+  order. `doctor` prints `php` lines in place of `python` ones, plus `ffi_enable`, `library` and
+  `impersonation`. Colors are plain ANSI instead of rich, and there is no download progress bar.
 - The full list of differences, each with its reason, is in
   [tests/Parity/ApiDifferences.php](tests/Parity/ApiDifferences.php); the parity tests below keep
   it complete.
@@ -321,8 +363,8 @@ and values as curl_cffi, including the impersonation options such as `CurlOpt::H
 2. `Requests::get()`, `Session`, `Response`, cookies, redirects, proxies, multipart, streaming (done)
 3. `AsyncSession` on `curl_multi` + PHP Fibers (done)
 4. Custom `ja3` / `akamai` / `extra_fp` / `perk`, `Fingerprint`, `WebSocket` / `AsyncWebSocket` (done)
-5. Parity test suite, CI on Linux/macOS/Windows, Packagist release, the response cache,
-   `CurlShare` and `markdown()` (in progress), then the command line tool
+5. Parity test suite, CI on Linux/macOS/Windows, the response cache, `CurlShare`, `markdown()`
+   and the `curl-cffi` command line tool (done), then the Packagist release
 
 ## Tests
 
@@ -339,7 +381,9 @@ Parity with Python curl_cffi is tested two ways:
   curl_cffi is checked against the PHP classes. Anything PHP lacks must be listed in
   `ApiDifferences.php` with a reason, and an entry that gets ported must be taken off.
   `python_api.json` is the Python side, read from curl_cffi's source by `python_api.py`; CI
-  regenerates it from the version in `CURL_CFFI_VERSION` and fails if it changed.
+  regenerates it from the version in `CURL_CFFI_VERSION` and fails if it changed. The same file
+  holds the `curl-cffi` command's subcommands, options and defaults, read from its argparse
+  calls, and `bin/curl-cffi` must match them.
 - **Fingerprints** (`tests/Fingerprint`, needs network, on Linux, macOS and Windows): the JA4 and
   HTTP/2 fingerprints PHP sends are compared with what Python curl_cffi sends for the same browser
   targets, through `Curl`, `Requests` and `AsyncSession`, and for a custom `ja3` + `akamai` +

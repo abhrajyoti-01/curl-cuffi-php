@@ -236,6 +236,74 @@ def exports(rel):
     return []
 
 
+def cli_reference():
+    """Subcommands of the curl-cffi command, and the options, positionals and
+    defaults each one takes, from the argparse calls in curl_cffi/cli."""
+    methods = None
+    for node in module("cli/parse.py").body:
+        if isinstance(node, ast.Assign) and getattr(node.targets[0], "id", None) == "SUPPORTED_METHODS":
+            methods = sorted(ast.literal_eval(node.value))
+    helpers = {
+        "_add_common_flags": find_function("cli/__init__.py", "_add_common_flags"),
+        "_add_request_positionals": find_function("cli/__init__.py", "_add_request_positionals"),
+    }
+    commands, arguments, defaults = [], {}, {}
+
+    def calls_in(fn):
+        calls = [n for n in ast.walk(fn) if isinstance(n, ast.Call)]
+        return sorted(calls, key=lambda n: (n.lineno, n.col_offset))
+
+    def add_arguments(fn, into):
+        for call in calls_in(fn):
+            if not (isinstance(call.func, ast.Attribute) and call.func.attr == "add_argument"):
+                continue
+            names = [a.value for a in call.args if isinstance(a, ast.Constant)]
+            kw = {k.arg: k.value for k in call.keywords}
+            if not names[0].startswith("-"):
+                into.append(literal(kw["metavar"]) if "metavar" in kw else names[0])
+                continue
+            boolean = "action" in kw and ast.unparse(kw["action"]).endswith("BooleanOptionalAction")
+            for n in names:
+                into.append(n)
+                if boolean and n.startswith("--"):
+                    into.append("--no-" + n[2:])
+            if "default" in kw:
+                defaults[names[0]] = literal(kw["default"])
+
+    def walk(fn):
+        assigned = {
+            id(n.value): n.targets[0].id
+            for n in ast.walk(fn)
+            if isinstance(n, ast.Assign) and isinstance(n.targets[0], ast.Name)
+        }
+        parsers = {}  # variable -> subcommand
+        for call in calls_in(fn):
+            f = call.func
+            if isinstance(f, ast.Attribute) and f.attr == "add_parser":
+                first = call.args[0]
+                if isinstance(first, ast.Constant):
+                    names = [first.value]
+                else:  # the loop over SUPPORTED_METHODS, lower then upper case
+                    names = [n for m in methods for n in (m.lower(), m)]
+                commands.extend(names)
+                key = names[0] if len(names) == 1 else "<verb>"
+                arguments.setdefault(key, ["-h", "--help"])  # argparse's own help option
+                if id(call) in assigned:
+                    parsers[assigned[id(call)]] = key
+            elif isinstance(f, ast.Name) and f.id in helpers and call.args and isinstance(call.args[0], ast.Name):
+                add_arguments(helpers[f.id], arguments[parsers[call.args[0].id]])
+            elif isinstance(f, ast.Name) and f.id == "add_pro_parsers":
+                walk(find_function("cli/pro.py", "add_pro_parsers"))
+            elif isinstance(f, ast.Attribute) and f.attr == "add_argument" and isinstance(f.value, ast.Name):
+                target = parsers.get(f.value.id)
+                if target is not None:
+                    one = ast.Module(body=[ast.Expr(call)], type_ignores=[])
+                    add_arguments(one, arguments[target])
+
+    walk(find_function("cli/__init__.py", "build_parser"))
+    return {"commands": commands, "arguments": arguments, "defaults": defaults}
+
+
 session_cls = find_class("requests/session.py", "Session")
 async_cls = find_class("requests/session.py", "AsyncSession")
 ws_cls = find_class("requests/websockets.py", "WebSocket")
@@ -301,6 +369,7 @@ reference = {
         "curl_cffi": exports("__init__.py"),
         "curl_cffi.requests": exports("requests/__init__.py"),
     },
+    "cli": cli_reference(),
 }
 
 json.dump(reference, sys.stdout, indent=1, sort_keys=False)

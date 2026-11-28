@@ -153,7 +153,7 @@ final class Headers implements \ArrayAccess, \IteratorAggregate, \Countable
         return $this->list;
     }
 
-    /** @return array<string, ?string> name => value, repeated names joined with ", ", like Python's items() */
+    /** @return array<string, ?string> lowercased name => value, repeated names joined with ", ", like Python's items() */
     public function items(): array
     {
         return $this->toArray();
@@ -190,18 +190,21 @@ final class Headers implements \ArrayAccess, \IteratorAggregate, \Countable
         $this->encoding = $encoding;
     }
 
-    /** @return list<string> unique names, original case of the first occurrence */
+    /**
+     * @return list<string> unique names, lowercased like Python's keys();
+     *                      multiItems() and raw() keep the original case
+     */
     public function keys(): array
     {
         $seen = [];
         foreach ($this->list as [$k]) {
-            $seen[strtolower($k)] ??= $k;
+            $seen[strtolower($k)] = true;
         }
 
-        return array_values($seen);
+        return array_map('strval', array_keys($seen));
     }
 
-    /** @return array<string, ?string> name => joined value */
+    /** @return array<string, ?string> lowercased name => joined value */
     public function toArray(): array
     {
         $out = [];

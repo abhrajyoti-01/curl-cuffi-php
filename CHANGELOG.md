@@ -29,6 +29,12 @@ dependency.
   sessions.
 - `Response::markdown()`, with the optional fivefilters/readability.php and
   league/html-to-markdown packages.
+- The `curl-cffi` command (`vendor/bin/curl-cffi`), like Python's: HTTP verb subcommands with
+  request items (`Header:Value`, `param==value`, `field=value`, `field:=json`, `@file`,
+  `+cookie=value`), `run` for `.http` and HAR files, `doctor`, and `update` / `list` / `config`
+  for fingerprints. Its subcommands, options and defaults are checked against Python's in CI.
+- `Headers::keys()`, `items()` and iteration give lowercased names, as Python's do
+  (`multiItems()` and `raw()` keep the original case).
 - `CurlCffi\Warnings`: curl_cffi's warnings, off by default as in Python
   (`Warnings::config(on: true)` is `config_warnings(on=True)`).
 - An API parity test suite that checks every option, method, class, exception and constant of

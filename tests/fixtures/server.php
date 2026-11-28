@@ -91,6 +91,17 @@ if ($path === '/latin1') {
     echo "caf\xe9";
     exit;
 }
+if ($path === '/image') {
+    header('Content-Type: image/png');
+    echo "\x89PNG\r\n\x1a\n";
+    exit;
+}
+if ($path === '/download') {
+    // a name with a directory and a space, which the CLI must make safe
+    header('Content-Disposition: attachment; filename="../report 1.txt"');
+    echo 'report body';
+    exit;
+}
 if ($path === '/upload') {
     header('Content-Type: application/json');
     $files = [];

@@ -33,6 +33,8 @@ jobs:
         run: php bin/curl-cffi-install
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: curl-cffi doctor
+        run: php bin/curl-cffi doctor
       - name: Integration tests against libcurl-impersonate
         run: php vendor/bin/phpunit --testsuite integration
 
@@ -67,6 +69,8 @@ jobs:
           echo Platform::id(), PHP_EOL, Library::version(), PHP_EOL, Library::loadedPath(), PHP_EOL,
           "impersonate: ", var_export(Library::supportsImpersonation(), true),
           ", ws: ", var_export(Library::supportsWebSocket(), true), PHP_EOL;'
+      - name: curl-cffi doctor
+        run: php bin/curl-cffi doctor
       - name: Unit, parity and integration tests against libcurl-impersonate
         run: php vendor/bin/phpunit --display-skipped
 
