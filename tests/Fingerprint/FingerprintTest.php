@@ -85,6 +85,36 @@ final class FingerprintTest extends TestCase
         self::assertSame($py['akamai_hash'], $php['akamai_hash'], "HTTP/2 Akamai fingerprint differs for $target");
     }
 
+    public function testAsyncSessionMatchesPythonCurlCffi(): void
+    {
+        if (!Library::supportsImpersonation()) {
+            self::markTestSkipped('libcurl-impersonate is not loaded');
+        }
+        $refFile = getenv('CURL_CFFI_FP_REFERENCE');
+        if (!is_string($refFile) || !is_file($refFile)) {
+            self::markTestSkipped('Set CURL_CFFI_FP_REFERENCE to the output of python_reference.py');
+        }
+        $reference = json_decode((string) file_get_contents($refFile), true, 512, JSON_THROW_ON_ERROR);
+
+        // Every target at once on one curl_multi loop, like
+        // asyncio.gather(*[s.get(URL, impersonate=t) for t in targets])
+        $s = new \CurlCffi\Requests\AsyncSession(timeout: 30);
+        $promises = [];
+        foreach (self::TARGETS as $target) {
+            if (isset($reference[$target])) {
+                $promises[$target] = $s->get(self::ECHO_URL, impersonate: $target);
+            }
+        }
+        if ($promises === []) {
+            self::markTestSkipped('No Python reference targets');
+        }
+        foreach ($s->gather($promises) as $target => $r) {
+            $php = $r->json();
+            self::assertSame($reference[$target]['ja4'], $php['ja4'], "JA4 differs for $target (async)");
+            self::assertSame($reference[$target]['akamai_hash'], $php['akamai_hash'], "HTTP/2 fingerprint differs for $target (async)");
+        }
+    }
+
     /** @return array<string, mixed> */
     public static function fetch(string $target): array
     {

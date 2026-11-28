@@ -30,7 +30,11 @@ final class LocalServer
         $router = dirname(__DIR__) . '/fixtures/server.php';
         $cmd = [PHP_BINARY, '-S', '127.0.0.1:' . self::$port, $router];
         $null = PHP_OS_FAMILY === 'Windows' ? 'NUL' : '/dev/null';
-        self::$process = proc_open($cmd, [1 => ['file', $null, 'w'], 2 => ['file', $null, 'w']], $pipes);
+        // Several workers, so concurrent (async) requests are served in
+        // parallel. A worker can still take two connections at once and serve
+        // them one after the other, so timing tests leave room for that.
+        $env = getenv() + ['PHP_CLI_SERVER_WORKERS' => '16'];
+        self::$process = proc_open($cmd, [1 => ['file', $null, 'w'], 2 => ['file', $null, 'w']], $pipes, null, $env);
 
         for ($i = 0; $i < 50; $i++) {
             $conn = @fsockopen('127.0.0.1', self::$port, $errno, $errstr, 0.1);
