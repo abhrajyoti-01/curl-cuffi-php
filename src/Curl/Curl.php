@@ -54,6 +54,7 @@ class Curl
     private CData $errorBuffer;
     private string $cacert;
     private bool $isCertSet = false;
+    private bool $skipCacert = false;
 
     /** @var array<int, CData> option => curl_slist* */
     private array $slists = [];
@@ -304,12 +305,32 @@ class Curl
         if ($this->handle === null) {
             throw new CurlError('Cannot perform request on closed handle.');
         }
+        $this->beforePerform();
+        $ret = $this->ffi->curl_easy_perform($this->handle);
+        $this->afterPerform($ret, $clearHeaders, $clearResolve);
+    }
+
+    /**
+     * Prepare the handle for a transfer. perform() calls this; call it
+     * yourself only when driving the handle through CurlMulti.
+     *
+     * @internal
+     */
+    public function beforePerform(): void
+    {
         $this->ensureCacert();
         $this->callbackException = null;
         FFI::memset($this->errorBuffer, 0, self::ERROR_BUFFER_SIZE);
+    }
 
-        $ret = $this->ffi->curl_easy_perform($this->handle);
-
+    /**
+     * Finish a transfer with result code $ret: rethrow a callback exception,
+     * turn a non-zero code into CurlError, free per-request lists.
+     *
+     * @internal
+     */
+    public function afterPerform(int $ret, bool $clearHeaders = true, bool $clearResolve = true): void
+    {
         try {
             if ($this->callbackException !== null) {
                 throw $this->callbackException;
@@ -369,6 +390,7 @@ class Curl
         $this->freeAllSlists();
         $this->keepAlive = [];
         $this->isCertSet = false;
+        $this->skipCacert = false;
         $this->setErrorBuffer();
     }
 
@@ -435,9 +457,18 @@ class Curl
         $this->ffi->curl_easy_setopt($this->handle, CurlOpt::ERRORBUFFER, $ptr);
     }
 
+    /**
+     * Do not set the default CA bundle before perform(), e.g. when TLS
+     * verification is turned off. Reset by reset().
+     */
+    public function skipCacert(bool $skip = true): void
+    {
+        $this->skipCacert = $skip;
+    }
+
     private function ensureCacert(): void
     {
-        if ($this->isCertSet || $this->cacert === '') {
+        if ($this->skipCacert || $this->isCertSet || $this->cacert === '') {
             return;
         }
         $this->setopt(CurlOpt::CAINFO, $this->cacert);
@@ -606,11 +637,11 @@ class Curl
     }
 
     /** @return list<string> */
-    private static function slistToArray(CData $head): array
+    private static function slistToArray(?CData $head): array
     {
         $items = [];
         $node = $head;
-        while (!FFI::isNull($node)) {
+        while ($node !== null && !FFI::isNull($node)) {
             $items[] = FFI::string($node->data);
             $node = $node->next;
         }

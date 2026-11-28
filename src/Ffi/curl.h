@@ -49,3 +49,29 @@ CURLMcode curl_multi_remove_handle(CURLM *multi, CURL *easy);
 CURLMcode curl_multi_cleanup(CURLM *multi);
 CURLMcode curl_multi_setopt(CURLM *multi, int option, ...);
 const char *curl_multi_strerror(CURLMcode code);
+
+/* multi interface (streaming responses, AsyncSession) */
+typedef struct {
+    int msg; /* CURLMSG_DONE = 1 */
+    CURL *easy_handle;
+    union {
+        void *whatever;
+        CURLcode result;
+    } data;
+} CURLMsg;
+CURLMcode curl_multi_perform(CURLM *multi, int *running_handles);
+CURLMcode curl_multi_poll(CURLM *multi, void *extra_fds, unsigned int extra_nfds, int timeout_ms, int *numfds);
+CURLMcode curl_multi_wakeup(CURLM *multi);
+CURLMsg *curl_multi_info_read(CURLM *multi, int *msgs_in_queue);
+
+/* mime (multipart/form-data uploads) */
+typedef void curl_mime;
+typedef void curl_mimepart;
+curl_mime *curl_mime_init(CURL *easy);
+void curl_mime_free(curl_mime *mime);
+curl_mimepart *curl_mime_addpart(curl_mime *mime);
+CURLcode curl_mime_name(curl_mimepart *part, const char *name);
+CURLcode curl_mime_filename(curl_mimepart *part, const char *filename);
+CURLcode curl_mime_type(curl_mimepart *part, const char *mimetype);
+CURLcode curl_mime_data(curl_mimepart *part, const char *data, size_t datasize);
+CURLcode curl_mime_filedata(curl_mimepart *part, const char *filename);
