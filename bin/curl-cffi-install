@@ -8,6 +8,7 @@
  *
  * Usage:
  *   vendor/bin/curl-cffi-install [--tag=v1.2.3] [--platform=x86_64-linux-gnu] [--force]
+ *   vendor/bin/curl-cffi-install --list      # show the release's assets
  *
  * Environment:
  *   GITHUB_TOKEN  optional, avoids GitHub API rate limits
@@ -37,18 +38,26 @@ if (!class_exists(\CurlCffi\Ffi\Platform::class)) {
 use CurlCffi\Ffi\Library;
 use CurlCffi\Ffi\Platform;
 
-$options = getopt('', ['tag:', 'platform:', 'force', 'help']);
+$options = getopt('', ['tag:', 'platform:', 'force', 'list', 'help']);
 if (isset($options['help'])) {
-    fwrite(STDOUT, "Usage: curl-cffi-install [--tag=vX.Y.Z] [--platform=ARCH-OS] [--force]\n");
+    fwrite(STDOUT, "Usage: curl-cffi-install [--tag=vX.Y.Z] [--platform=ARCH-OS] [--force] [--list]\n");
     exit(0);
 }
 
-$platform = $options['platform'] ?? Platform::id();
+$platform = Platform::normalize($options['platform'] ?? Platform::id());
 $tag = $options['tag'] ?? null;
 $force = isset($options['force']);
 $targetDir = Library::libDir() . DIRECTORY_SEPARATOR . $platform;
 
 try {
+    if (isset($options['list'])) {
+        $release = fetchRelease($tag);
+        out("Assets of " . REPO . " {$release['tag_name']}:");
+        foreach ($release['assets'] ?? [] as $a) {
+            out('  ' . $a['name']);
+        }
+        exit(0);
+    }
     if (!$force && findLibrary($targetDir) !== null) {
         out("libcurl-impersonate already installed in $targetDir (use --force to reinstall)");
     } else {
@@ -61,24 +70,46 @@ try {
     exit(1);
 }
 
-function installLibrary(string $platform, ?string $tag, string $targetDir): void
+/** @return array<string, mixed> the GitHub release, latest by default */
+function fetchRelease(?string $tag): array
 {
     $api = 'https://api.github.com/repos/' . REPO . '/releases/' . ($tag ? 'tags/' . rawurlencode($tag) : 'latest');
     out("Looking up release " . ($tag ?? 'latest') . " of " . REPO . '...');
-    $release = json_decode(httpGet($api, true), true, 512, JSON_THROW_ON_ERROR);
 
+    return json_decode(httpGet($api, true), true, 512, JSON_THROW_ON_ERROR);
+}
+
+/**
+ * The release asset for a platform, e.g. libcurl-impersonate-v1.0.0.x86_64-linux-gnu.tar.gz.
+ * Tries every spelling of the CPU and OS (aarch64 / arm64, macos / darwin, ...).
+ *
+ * @param list<array<string, mixed>> $assets
+ *
+ * @return array<string, mixed>|null
+ */
+function findAsset(array $assets, string $platform): ?array
+{
     [$arch, $os] = explode('-', $platform, 2);
-    $asset = null;
-    foreach ($release['assets'] ?? [] as $candidate) {
-        $name = (string) $candidate['name'];
-        // e.g. libcurl-impersonate-v1.0.0.x86_64-linux-gnu.tar.gz
-        if (str_starts_with($name, 'libcurl-impersonate')
-            && str_contains($name, ".{$arch}-{$os}.")
-            && preg_match('/\.(tar\.gz|tgz|zip)$/', $name)) {
-            $asset = $candidate;
-            break;
+    foreach (Platform::archAliases($arch) as $a) {
+        foreach (Platform::osAliases($os) as $o) {
+            foreach ($assets as $candidate) {
+                $name = (string) $candidate['name'];
+                if (str_starts_with($name, 'libcurl-impersonate')
+                    && str_contains($name, ".{$a}-{$o}.")
+                    && preg_match('/\.(tar\.gz|tgz|zip)$/', $name)) {
+                    return $candidate;
+                }
+            }
         }
     }
+
+    return null;
+}
+
+function installLibrary(string $platform, ?string $tag, string $targetDir): void
+{
+    $release = fetchRelease($tag);
+    $asset = findAsset($release['assets'] ?? [], $platform);
     if ($asset === null) {
         $names = array_map(static fn ($a) => $a['name'], $release['assets'] ?? []);
         throw new RuntimeException(
@@ -175,8 +206,13 @@ function extractArchive(string $archive, string $dest): void
 
         return;
     }
-    // Prefer the tar command: it keeps symlinks, which PharData does not.
-    $tar = PHP_OS_FAMILY === 'Windows' ? 'tar.exe' : 'tar';
+    // Prefer the tar command: it keeps symlinks, which PharData does not. On
+    // Windows use the system bsdtar: GNU tar (from Git) reads "C:" as a host name.
+    $tar = 'tar';
+    if (PHP_OS_FAMILY === 'Windows') {
+        $system = (getenv('SystemRoot') ?: 'C:\\Windows') . '\\System32\\tar.exe';
+        $tar = is_file($system) ? $system : 'tar.exe';
+    }
     $cmd = [$tar, '-xzf', $archive, '-C', $dest];
     $proc = @proc_open($cmd, [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
     if (is_resource($proc)) {

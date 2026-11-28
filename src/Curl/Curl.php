@@ -11,6 +11,7 @@ use CurlCffi\Curl\Const\CurlOpt;
 use CurlCffi\Curl\Const\CurlWsFlag;
 use CurlCffi\Ffi\Library;
 use CurlCffi\Impersonate\BrowserType;
+use CurlCffi\Requests\Cookies;
 use FFI;
 use FFI\CData;
 
@@ -365,6 +366,33 @@ class Curl
                 unset($this->slists[$option]);
             }
         }
+    }
+
+    /**
+     * Wrapper for curl_easy_upkeep(): keeps idle connections alive, e.g. by
+     * sending HTTP/2 PING frames. Returns 0 on a closed handle, as in Python.
+     */
+    public function upkeep(): int
+    {
+        return $this->handle === null ? 0 : $this->ffi->curl_easy_upkeep($this->handle);
+    }
+
+    /**
+     * Cookies from raw header lines, like Python's Curl.parse_cookie_headers():
+     * only "Set-Cookie: ..." lines are read.
+     *
+     * @param list<string> $headers
+     */
+    public function parseCookieHeaders(array $headers): Cookies
+    {
+        $values = [];
+        foreach ($headers as $line) {
+            if (strncasecmp($line, 'set-cookie: ', 12) === 0) {
+                $values[] = rtrim(substr($line, 12), "\r\n");
+            }
+        }
+
+        return Cookies::fromSetCookieHeaders($values);
     }
 
     /** Wrapper for curl_easy_pause(). */

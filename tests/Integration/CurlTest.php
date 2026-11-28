@@ -207,4 +207,17 @@ final class CurlTest extends TestCase
         $this->expectException(CurlError::class);
         (new Curl())->impersonate('netscape4');
     }
+
+    public function testUpkeepAndParseCookieHeaders(): void
+    {
+        [$c] = $this->curlWithBuffer('/echo');
+        $c->perform();
+        self::assertSame(0, $c->upkeep());
+
+        $cookies = $c->parseCookieHeaders(["HTTP/1.1 200 OK\r\n", "Set-Cookie: a=1; Path=/\r\n", "X-Other: 1\r\n", "set-cookie: b=2\r\n"]);
+        self::assertSame(['a' => '1', 'b' => '2'], $cookies->getDict());
+
+        $c->close();
+        self::assertSame(0, $c->upkeep(), 'a closed handle is ignored, as in Python');
+    }
 }

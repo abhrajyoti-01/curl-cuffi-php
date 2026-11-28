@@ -24,6 +24,7 @@ final class Headers implements \ArrayAccess, \IteratorAggregate, \Countable
 {
     /** @var list<array{0: string, 1: ?string}> */
     private array $list = [];
+    private ?string $encoding = null;
 
     /** @param Headers|array<mixed>|null $headers */
     public function __construct(Headers|array|null $headers = null)
@@ -144,6 +145,49 @@ final class Headers implements \ArrayAccess, \IteratorAggregate, \Countable
     public function multiItems(): array
     {
         return $this->list;
+    }
+
+    /** @return list<array{0: string, 1: ?string}> every [name, value] pair as sent or received, like Python's Headers.raw */
+    public function raw(): array
+    {
+        return $this->list;
+    }
+
+    /** @return array<string, ?string> name => value, repeated names joined with ", ", like Python's items() */
+    public function items(): array
+    {
+        return $this->toArray();
+    }
+
+    /** @return list<?string> values, repeated names joined with ", " */
+    public function values(): array
+    {
+        return array_values($this->toArray());
+    }
+
+    /**
+     * Encoding of the header bytes: "ascii" when they all are, else "utf-8"
+     * when valid, else "iso-8859-1", as Python guesses it.
+     */
+    public function encoding(): string
+    {
+        if ($this->encoding !== null) {
+            return $this->encoding;
+        }
+        $all = '';
+        foreach ($this->list as [$k, $v]) {
+            $all .= $k . ($v ?? '');
+        }
+        if (!preg_match('/[\x80-\xff]/', $all)) {
+            return 'ascii';
+        }
+
+        return preg_match('//u', $all) ? 'utf-8' : 'iso-8859-1';
+    }
+
+    public function setEncoding(string $encoding): void
+    {
+        $this->encoding = $encoding;
     }
 
     /** @return list<string> unique names, original case of the first occurrence */

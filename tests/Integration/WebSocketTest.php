@@ -283,10 +283,12 @@ final class WebSocketTest extends TestCase
     public function testAsyncSocketsRunConcurrently(): void
     {
         $s = new AsyncSession();
+        $wsUrl = self::url();               // start both servers outside the timed part
+        $delayUrl = LocalServer::delayUrl(0.5);
         $start = microtime(true);
-        $results = $s->run(function () use ($s): array {
-            $talk = function (string $name) use ($s): string {
-                $ws = $s->wsConnect(self::url())->await();
+        $results = $s->run(function () use ($s, $wsUrl, $delayUrl): array {
+            $talk = function (string $name) use ($s, $wsUrl): string {
+                $ws = $s->wsConnect($wsUrl)->await();
                 $ws->sendStr('slow:0.5');
                 $late = $ws->recvStr(timeout: 5)->await();
                 $ws->close()->await();
@@ -297,7 +299,7 @@ final class WebSocketTest extends TestCase
             return $s->gather([
                 'a' => fn () => $talk('a'),
                 'b' => fn () => $talk('b'),
-                'http' => $s->get(LocalServer::delayUrl(0.5)),
+                'http' => $s->get($delayUrl),
             ]);
         });
         $elapsed = microtime(true) - $start;

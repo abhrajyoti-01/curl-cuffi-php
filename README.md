@@ -5,9 +5,10 @@ impersonates real browsers, with matching TLS (JA3/JA4) and HTTP/2 fingerprints.
 of [libcurl-impersonate](https://github.com/lexiforest/curl-impersonate) through PHP's FFI
 extension. No Python, no compiled PHP extension.
 
-> **Status: milestone 4 of 5.** `Requests`, `Session`, `AsyncSession`, custom fingerprints
+> **Status: milestone 5 of 5.** `Requests`, `Session`, `AsyncSession`, custom fingerprints
 > (`ja3`, `akamai`, `extra_fp`, `perk`, `Fingerprint`), `WebSocket` / `AsyncWebSocket` and the
-> low-level `Curl` class work today. Milestone 5 adds more platforms in CI and the Packagist release.
+> low-level `Curl` class work today, and CI tests them on Linux, macOS and Windows. Still to come:
+> the response cache, `CurlShare`, `Response::markdown()` and the `curl-cffi` command line tool.
 
 ## Why not ext-curl?
 
@@ -21,7 +22,19 @@ same.
 
 - PHP 8.1+ on a 64-bit OS, with `ext-ffi`
 - `ffi.enable=true` in php.ini for web servers (the default `preload` only allows the CLI)
-- Linux (glibc or musl), macOS or Windows on x86_64 or arm64
+- Linux (glibc or musl), macOS or Windows, on x86_64 or arm64
+
+CI runs the whole test suite against libcurl-impersonate on each of these:
+
+| OS | CPU | PHP |
+| --- | --- | --- |
+| Linux (Ubuntu) | x86_64 | 8.1, 8.2, 8.3, 8.4 |
+| Linux (Ubuntu) | arm64 | 8.4 |
+| macOS | arm64 (Apple Silicon) | 8.1, 8.4 |
+| macOS | x86_64 (Intel) | 8.4 |
+| Windows | x86_64 | 8.1, 8.4 |
+
+musl (Alpine) and Windows on arm64 use the same installer and loader but are not in CI.
 
 ## Install
 
@@ -30,8 +43,13 @@ composer require abhrajyoti-01/curl-cffi-php
 vendor/bin/curl-cffi-install      # downloads libcurl-impersonate + CA bundle into the package's lib/
 ```
 
-To use your own build, set `CURL_CFFI_LIBRARY=/path/to/libcurl-impersonate.so` or call
-`CurlCffi\Ffi\Library::setPath()` before the first request.
+The installer picks the build for your OS and CPU from
+[curl-impersonate's releases](https://github.com/lexiforest/curl-impersonate/releases) and checks
+its SHA-256. `--tag=v1.2.3` pins a release, `--platform=arm64-macos` picks another build and
+`--list` shows what a release has. On Windows use `php vendor\bin\curl-cffi-install`.
+
+To use your own build, set `CURL_CFFI_LIBRARY=/path/to/libcurl-impersonate.so` (`.dylib` on
+macOS, `.dll` on Windows) or call `CurlCffi\Ffi\Library::setPath()` before the first request.
 
 ## Usage
 
@@ -203,6 +221,9 @@ too. Unknown options throw a `TypeError`, like Python.
 | `asyncio.create_task(coro())` | `$s->spawn($fn)` |
 | `await asyncio.sleep(1)` | `$s->sleep(1)->await()` |
 | `curl_cffi.requests.exceptions.*` | `CurlCffi\Requests\Exceptions\*` |
+| `curl_cffi.config_warnings(on=True)` | `CurlCffi\Warnings::config(on: true)` |
+| `s.upkeep()`, `await s.upkeep()` | `$s->upkeep()`, `$s->upkeep()->await()` |
+| `Session(curl=c)` | `new Session(curl: $c)` |
 
 Response properties also answer to their Python names (`$r->status_code`, `$r->raise_for_status()`).
 
@@ -217,13 +238,18 @@ Differences from Python:
   `['field' => ['data' => '...', 'filename' => 'a.txt', 'content_type' => 'text/plain']]`).
   Python only has `multipart=`, which works here too.
 - `json()` returns arrays by default; pass `associative: false` for objects.
-- Python's `warnings.warn` (e.g. `ja3` together with `impersonate`) is a PHP `E_USER_WARNING`.
+- Python's `CurlCffiWarning`s (e.g. `ja3` together with `impersonate`) are off by default, as in
+  Python. `Warnings::config(on: true)` turns them on as PHP `E_USER_WARNING`s.
 - `WebSocketClosed` and `WebSocketTimeout` extend `WebSocketError` (PHP has no multiple
   inheritance, so they are not also `SessionClosed` / `Timeout`).
 - `AsyncSession::wsConnect()` does the handshake synchronously (Python uses a thread), and an
   `AsyncWebSocket` reads while a `recv()` is waiting rather than in a background task. Python's
   queue-tuning options such as `recv_queue_size` don't exist here.
-- Not yet: the response cache, the `curl-cffi` command line tool and `thread=`.
+- Not yet: the response cache (`cache=`), `CurlShare` (`curl_share=`), `Response::markdown()` and
+  the `curl-cffi` command line tool. `thread=` (eventlet/gevent) has no PHP equivalent.
+- The full list of differences, each with its reason, is in
+  [tests/Parity/ApiDifferences.php](tests/Parity/ApiDifferences.php); the parity tests below keep
+  it complete.
 
 ### Low level, same as `curl_cffi.Curl`
 
@@ -252,7 +278,8 @@ and values as curl_cffi, including the impersonation options such as `CurlOpt::H
 2. `Requests::get()`, `Session`, `Response`, cookies, redirects, proxies, multipart, streaming (done)
 3. `AsyncSession` on `curl_multi` + PHP Fibers (done)
 4. Custom `ja3` / `akamai` / `extra_fp` / `perk`, `Fingerprint`, `WebSocket` / `AsyncWebSocket` (done)
-5. Parity test suite, CI on Linux/macOS/Windows, Packagist release
+5. Parity test suite, CI on Linux/macOS/Windows, Packagist release (in progress), then the
+   response cache, `CurlShare`, `markdown()` and the command line tool
 
 ## Tests
 
@@ -262,9 +289,18 @@ CURL_CFFI_LIBRARY=libcurl.so.4 composer test     # against stock libcurl (impers
 php bin/curl-cffi-install && composer test       # against libcurl-impersonate
 ```
 
-CI also runs `tests/Fingerprint`, which compares the JA4 and HTTP/2 fingerprints PHP sends with
-what Python curl_cffi sends for the same browser targets, through `Curl`, `Requests` and
-`AsyncSession`, and for a custom `ja3` + `akamai` + `extra_fp` request.
+Parity with Python curl_cffi is tested two ways:
+
+- **API** (`tests/Parity`, runs everywhere, no Python needed): every option of every call, every
+  public method, property and attribute, every exception, enum member and exported name of
+  curl_cffi is checked against the PHP classes. Anything PHP lacks must be listed in
+  `ApiDifferences.php` with a reason, and an entry that gets ported must be taken off.
+  `python_api.json` is the Python side, read from curl_cffi's source by `python_api.py`; CI
+  regenerates it from the version in `CURL_CFFI_VERSION` and fails if it changed.
+- **Fingerprints** (`tests/Fingerprint`, needs network, on Linux, macOS and Windows): the JA4 and
+  HTTP/2 fingerprints PHP sends are compared with what Python curl_cffi sends for the same browser
+  targets, through `Curl`, `Requests` and `AsyncSession`, and for a custom `ja3` + `akamai` +
+  `extra_fp` request.
 
 ## License
 

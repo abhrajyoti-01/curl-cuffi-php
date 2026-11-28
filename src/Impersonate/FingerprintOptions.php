@@ -9,6 +9,7 @@ use CurlCffi\Curl\Const\CurlOpt;
 use CurlCffi\Curl\Const\CurlSslVersion;
 use CurlCffi\Curl\Curl;
 use CurlCffi\Requests\Exceptions\ImpersonateError;
+use CurlCffi\Warnings;
 
 /**
  * Turns ja3 / akamai / perk strings, ExtraFingerprints and Fingerprint
@@ -48,10 +49,9 @@ final class FingerprintOptions
 
         if (str_ends_with($extensions, '-21')) {
             $extensions = substr($extensions, 0, -3);
-            trigger_error(
+            Warnings::warn(
                 'Padding(21) extension found in ja3 string, whether to add it should be managed by the SSL engine. '
-                . 'The TLS client hello packet may contain or not contain this extension, any of which should be correct.',
-                E_USER_WARNING
+                . 'The TLS client hello packet may contain or not contain this extension, any of which should be correct.'
             );
         }
         if (!$permute) {

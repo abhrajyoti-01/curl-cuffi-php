@@ -22,6 +22,7 @@ use CurlCffi\Impersonate\NativeTargets;
 use CurlCffi\Requests\Exceptions\ImpersonateError;
 use CurlCffi\Requests\Exceptions\RequestException;
 use CurlCffi\Requests\Exceptions\SessionClosed;
+use CurlCffi\Warnings;
 
 /**
  * Settings, cookies and request/response handling shared by Session and
@@ -631,25 +632,25 @@ abstract class BaseSession
 
             if ($ja3) {
                 if ($impersonated) {
-                    trigger_error('JA3 fingerprint was altered after impersonated version was set.', E_USER_WARNING);
+                    Warnings::warn('JA3 fingerprint was altered after impersonated version was set.');
                 }
                 FingerprintOptions::setJa3Options($c, $ja3, (bool) $extraFp?->tlsPermuteExtensions);
             }
             if ($extraFp !== null) {
                 if ($impersonated) {
-                    trigger_error('Extra fingerprints were altered after impersonated version was set.', E_USER_WARNING);
+                    Warnings::warn('Extra fingerprints were altered after impersonated version was set.');
                 }
                 FingerprintOptions::setExtraFp($c, $extraFp);
             }
             if ($akamai) {
                 if ($impersonated) {
-                    trigger_error('Akamai fingerprint was altered after impersonated version was set.', E_USER_WARNING);
+                    Warnings::warn('Akamai fingerprint was altered after impersonated version was set.');
                 }
                 FingerprintOptions::setAkamaiOptions($c, $akamai);
             }
             if ($perk) {
                 if ($impersonated) {
-                    trigger_error('Perk fingerprint was altered after impersonated version was set.', E_USER_WARNING);
+                    Warnings::warn('Perk fingerprint was altered after impersonated version was set.');
                 }
                 FingerprintOptions::setPerkOptions($c, $perk);
             }
@@ -753,7 +754,7 @@ abstract class BaseSession
         $rsp->history = $this->buildHistory($c, $blocks, $request->url, $defaultEncoding);
 
         // Response cookies: only from this response's Set-Cookie headers.
-        $rsp->cookies = self::parseSetCookies($rsp->headers->getList('set-cookie'));
+        $rsp->cookies = Cookies::fromSetCookieHeaders($rsp->headers->getList('set-cookie'));
 
         // Session cookies: everything the transfer changed.
         if (!$discardCookies) {
@@ -888,38 +889,6 @@ abstract class BaseSession
             }
         }
         $this->cookieJar->updateFromCurlChanges($changes);
-    }
-
-    /** @param list<?string> $headers */
-    private static function parseSetCookies(array $headers): Cookies
-    {
-        $jar = new Cookies();
-        foreach ($headers as $header) {
-            if ($header === null) {
-                continue;
-            }
-            $parts = array_map('trim', explode(';', $header));
-            $first = array_shift($parts);
-            if ($first === null || !str_contains($first, '=')) {
-                continue;
-            }
-            [$name, $value] = explode('=', $first, 2);
-            $domain = '';
-            $path = '/';
-            $secure = false;
-            foreach ($parts as $attr) {
-                [$k, $v] = array_pad(explode('=', $attr, 2), 2, '');
-                match (strtolower($k)) {
-                    'domain' => $domain = $v,
-                    'path' => $path = $v !== '' ? $v : '/',
-                    'secure' => $secure = true,
-                    default => null,
-                };
-            }
-            $jar->set(trim($name), trim($value), $domain, $path, $secure);
-        }
-
-        return $jar;
     }
 
     /** @param array<mixed> $files */

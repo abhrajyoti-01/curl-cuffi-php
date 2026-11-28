@@ -33,6 +33,21 @@ class Session extends BaseSession
 {
     private ?Curl $curl = null;
 
+    /**
+     * Takes the Session options (Options::SESSION), plus `curl`: a Curl
+     * handle to use instead of a new one, as in Python's Session(curl=...).
+     */
+    public function __construct(mixed ...$options)
+    {
+        $curl = $options['curl'] ?? null;
+        unset($options['curl']);
+        if ($curl !== null && !$curl instanceof Curl) {
+            throw new \TypeError('`curl` must be a ' . Curl::class);
+        }
+        parent::__construct(...$options);
+        $this->curl = $curl;
+    }
+
     public function __destruct()
     {
         $this->close();
@@ -44,6 +59,15 @@ class Session extends BaseSession
         $this->checkClosed();
 
         return $this->curl ??= new Curl();
+    }
+
+    /**
+     * curl_easy_upkeep() on the session's handle: keeps its idle connection
+     * alive, e.g. with an HTTP/2 PING. Returns a curl result code.
+     */
+    public function upkeep(): int
+    {
+        return $this->curl()->upkeep();
     }
 
     public function close(): void

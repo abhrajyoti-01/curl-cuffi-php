@@ -72,6 +72,7 @@ final class Library
         $errors = [];
         foreach (self::candidates() as $candidate) {
             try {
+                self::allowSiblingDlls($candidate);
                 self::$ffi = FFI::cdef($header, $candidate);
                 self::$loadedPath = $candidate;
                 // CURL_GLOBAL_DEFAULT = SSL | WIN32 = 3
@@ -212,6 +213,24 @@ final class Library
         }
 
         return null;
+    }
+
+    /**
+     * Windows looks for a DLL's own dependencies next to php.exe and on PATH,
+     * not next to the DLL. Add the library's folder to the search path so DLLs
+     * shipped beside libcurl-impersonate.dll are found.
+     */
+    private static function allowSiblingDlls(string $file): void
+    {
+        if (PHP_OS_FAMILY !== 'Windows' || !preg_match('#[\\\\/]#', $file)) {
+            return;
+        }
+        try {
+            FFI::cdef('int SetDllDirectoryA(const char *lpPathName);', 'kernel32.dll')
+                ->SetDllDirectoryA(dirname($file));
+        } catch (\Throwable) {
+            // Not fatal: a self-contained DLL loads without it.
+        }
     }
 
     /** @return list<string> */

@@ -97,6 +97,22 @@ class AsyncSession extends BaseSession
     }
 
     /**
+     * Run curl_easy_upkeep() on every idle handle in the pool, to keep their
+     * connections alive (HTTP/2 PING frames, for instance), like Python's
+     * AsyncSession.upkeep().
+     *
+     * @return Promise<list<int>> one curl result code per idle handle
+     */
+    public function upkeep(): Promise
+    {
+        $this->checkClosed();
+        $promise = new Promise($this->loop);
+        $promise->resolve(array_map(static fn (Curl $c): int => $c->upkeep(), $this->idle));
+
+        return $promise;
+    }
+
+    /**
      * Start a request. The returned promise resolves to a Response, or is
      * rejected with a RequestException (or HTTPError with raise_for_status).
      *

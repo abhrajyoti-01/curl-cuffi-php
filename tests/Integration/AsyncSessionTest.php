@@ -55,8 +55,9 @@ final class AsyncSessionTest extends TestCase
     public function testRequestsRunConcurrently(): void
     {
         $s = new AsyncSession();
+        $url = LocalServer::delayUrl(0.5); // starts the server outside the timed part
         $start = microtime(true);
-        $rs = $s->gather(array_map(fn () => $s->get(LocalServer::delayUrl(0.5)), range(1, 5)));
+        $rs = $s->gather(array_map(fn () => $s->get($url), range(1, 5)));
         $elapsed = microtime(true) - $start;
 
         self::assertCount(5, $rs);
@@ -70,8 +71,9 @@ final class AsyncSessionTest extends TestCase
     {
         $s = new AsyncSession(max_clients: 2);
         self::assertSame(2, $s->maxClients);
+        $url = LocalServer::delayUrl(0.4);
         $start = microtime(true);
-        $rs = $s->gather(array_map(fn () => $s->get(LocalServer::delayUrl(0.4)), range(1, 4)));
+        $rs = $s->gather(array_map(fn () => $s->get($url), range(1, 4)));
         $elapsed = microtime(true) - $start;
 
         self::assertCount(4, $rs);
@@ -177,15 +179,27 @@ final class AsyncSessionTest extends TestCase
     {
         $key = bin2hex(random_bytes(6));
         $s = new AsyncSession(retry: new RetryStrategy(count: 1, delay: 0.05), timeout: 0.5);
-        $r = $s->get(self::url("/flaky?key={$key}&fails=1"))->await();
+        $r = $s->get(LocalServer::flakyUrl($key))->await();
         self::assertSame(['calls' => 2], $r->json(), 'the first call timed out, the retry succeeded');
 
         $s = new AsyncSession(retry: 2);
+        $echo = self::url('/echo');
         $start = microtime(true);
-        $rs = $s->gather([$s->get('http://127.0.0.1:1/'), $s->get(self::url('/echo'))], returnExceptions: true);
+        $rs = $s->gather([$s->get('http://127.0.0.1:1/'), $s->get($echo)], returnExceptions: true);
         self::assertInstanceOf(ConnectionError::class, $rs[0]);
         self::assertSame(200, $rs[1]->statusCode);
         self::assertLessThan(2.0, microtime(true) - $start);
+    }
+
+    public function testUpkeep(): void
+    {
+        $s = new AsyncSession();
+        self::assertSame([], $s->upkeep()->await(), 'no idle handles yet');
+        $s->gather([$s->get(self::url('/echo')), $s->get(self::url('/echo'))]);
+        self::assertSame([0, 0], $s->upkeep()->await(), 'one result per idle handle');
+        $s->close();
+        $this->expectException(SessionClosed::class);
+        $s->upkeep();
     }
 
     public function testCookiesAreShared(): void
