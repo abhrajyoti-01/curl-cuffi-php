@@ -16,10 +16,10 @@
         "impersonate",
         "ffi"
     ],
-    "homepage": "https://github.com/abhrajyoti-01/curl-cuffi-php",
+    "homepage": "https://github.com/abhrajyoti-01/curl-cffi-php",
     "support": {
-        "issues": "https://github.com/abhrajyoti-01/curl-cuffi-php/issues",
-        "source": "https://github.com/abhrajyoti-01/curl-cuffi-php"
+        "issues": "https://github.com/abhrajyoti-01/curl-cffi-php/issues",
+        "source": "https://github.com/abhrajyoti-01/curl-cffi-php"
     },
     "require": {
         "php": ">=8.1",

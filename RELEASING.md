@@ -16,8 +16,8 @@
 ## Packagist (once)
 
 1. Sign in to [packagist.org](https://packagist.org) with GitHub.
-2. Submit `https://github.com/abhrajyoti-01/curl-cuffi-php`. The package name comes from
-   `composer.json`: `abhrajyoti-01/curl-cffi-php`.
+2. Submit `https://github.com/abhrajyoti-01/curl-cffi-php`. The package name,
+   `abhrajyoti-01/curl-cffi-php`, comes from `composer.json`.
 3. Packagist sets up the GitHub hook itself when you sign in with GitHub, so every new tag shows
    up as a version within a minute. If it does not, check "Settings > Connected accounts" on
    Packagist and use its "Update" button on the package page.

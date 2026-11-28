@@ -5,6 +5,8 @@ All notable changes to this project are listed here. Versions follow
 
 ## Unreleased
 
+## 0.1.0 - 2026-11-28
+
 First release: a PHP port of Python curl_cffi 0.17 on libcurl-impersonate, with no Python
 dependency.
 
