@@ -5,9 +5,9 @@ impersonates real browsers, with matching TLS (JA3/JA4) and HTTP/2 fingerprints.
 of [libcurl-impersonate](https://github.com/lexiforest/curl-impersonate) through PHP's FFI
 extension. No Python, no compiled PHP extension.
 
-> **Status: milestone 2 of 5.** The requests-style API (`Requests`, `Session`, `Response`) and the
-> low-level `Curl` class work today. `AsyncSession`, custom JA3/Akamai strings and WebSocket come
-> in the next milestones.
+> **Status: milestone 4 of 5 in progress.** `Requests`, `Session`, `AsyncSession`, custom
+> fingerprints (`ja3`, `akamai`, `extra_fp`, `perk`, `Fingerprint`) and the low-level `Curl` class
+> work today. WebSocket is next.
 
 ## Why not ext-curl?
 
@@ -109,6 +109,36 @@ At most `max_clients` transfers run at once; the rest wait their turn. Cookies, 
 `await()` inside a coroutine (`run()` or `spawn()`) suspends only that coroutine; anywhere else it
 runs the loop until the result is ready.
 
+### Custom fingerprints
+
+Besides the built-in browser targets, you can send any TLS and HTTP/2 fingerprint, exactly as in
+Python:
+
+```php
+use CurlCffi\Impersonate\Fingerprint;
+use CurlCffi\Impersonate\FingerprintManager;
+
+// ja3 + akamai strings, as printed by tls.peet.ws, plus what they can't express
+$r = Requests::get($url,
+    ja3: '771,4865-4866-4867-49195-49199-49196-49200-52393-52392-49171-49172-156-157-47-53,0-23-65281-10-11-35-16-5-13-18-51-45-43-27-17513,29-23-24,0',
+    akamai: '1:65536;2:0;4:6291456;6:262144|15663105|0|m,a,s,p',
+    extra_fp: ['tls_signature_algorithms' => ['ecdsa_secp256r1_sha256', 'rsa_pss_rsae_sha256'], 'tls_grease' => true],
+);
+
+// A whole fingerprint object (TLS, HTTP/2, HTTP/3, default headers)
+$fp = new Fingerprint(tls_version: '1.3', tls_ciphers: [...], http2_settings: '1:65536;4:6291456',
+                      headers: ['User-Agent' => '...']);
+$r = Requests::get($url, impersonate: $fp);
+
+// Named fingerprints from the fingerprint service, shared with Python's files
+FingerprintManager::setApiKey('imp_...');     // or IMPERSONATE_API_KEY
+FingerprintManager::updateFingerprints();
+$r = Requests::get($url, impersonate: 'a_downloaded_target');
+```
+
+`extra_fp` takes an `ExtraFingerprints` object or an array with its field names. These options
+need libcurl-impersonate; with stock libcurl they throw `ImpersonateError`.
+
 Options are passed as PHP named arguments with the same names as Python (`allow_redirects`,
 `max_redirects`, `proxy_auth`, `default_headers`, ...). camelCase spellings (`allowRedirects`) work
 too. Unknown options throw a `TypeError`, like Python.
@@ -127,6 +157,8 @@ too. Unknown options throw a `TypeError`, like Python.
 | `r.raise_for_status()`, `r.iter_lines()` | `$r->raiseForStatus()`, `$r->iterLines()` |
 | `CurlMime()` + `multipart=` | `new CurlMime()` + `multipart:` |
 | `RetryStrategy(count=3, delay=1)` | `new RetryStrategy(count: 3, delay: 1)` |
+| `ExtraFingerprints(tls_grease=True)` | `new ExtraFingerprints(tls_grease: true)` or `['tls_grease' => true]` |
+| `Fingerprint(...)`, `FingerprintManager.get_fingerprint(t)` | `new Fingerprint(...)`, `FingerprintManager::getFingerprint($t)` |
 | `s = AsyncSession(max_clients=10)` | `$s = new AsyncSession(max_clients: 10)` |
 | `r = await s.get(url)` | `$r = $s->get($url)->await()` |
 | `await asyncio.gather(*tasks)` | `$s->gather($promisesOrClosures)` |
@@ -149,7 +181,8 @@ Differences from Python:
   `['field' => ['data' => '...', 'filename' => 'a.txt', 'content_type' => 'text/plain']]`).
   Python only has `multipart=`, which works here too.
 - `json()` returns arrays by default; pass `associative: false` for objects.
-- Not yet: `ja3`, `akamai`, `extra_fp` and `perk` (milestone 4), the response cache and `thread=`.
+- Python's `warnings.warn` (e.g. `ja3` together with `impersonate`) is a PHP `E_USER_WARNING`.
+- Not yet: WebSocket (milestone 4), the response cache, the `curl-cffi` command line tool and `thread=`.
 
 ### Low level, same as `curl_cffi.Curl`
 
@@ -177,7 +210,7 @@ and values as curl_cffi, including the impersonation options such as `CurlOpt::H
 1. Core binding: FFI loader, installer, `Curl`, constants (done)
 2. `Requests::get()`, `Session`, `Response`, cookies, redirects, proxies, multipart, streaming (done)
 3. `AsyncSession` on `curl_multi` + PHP Fibers (done)
-4. Custom `ja3` / `akamai` / `extra_fp`, `WebSocket`
+4. Custom `ja3` / `akamai` / `extra_fp` / `perk` and `Fingerprint` (done), `WebSocket`
 5. Parity test suite, CI on Linux/macOS/Windows, Packagist release
 
 ## Tests
@@ -190,7 +223,7 @@ php bin/curl-cffi-install && composer test       # against libcurl-impersonate
 
 CI also runs `tests/Fingerprint`, which compares the JA4 and HTTP/2 fingerprints PHP sends with
 what Python curl_cffi sends for the same browser targets, through `Curl`, `Requests` and
-`AsyncSession`.
+`AsyncSession`, and for a custom `ja3` + `akamai` + `extra_fp` request.
 
 ## License
 

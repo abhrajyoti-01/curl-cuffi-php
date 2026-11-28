@@ -63,6 +63,30 @@ if ($path === '/flaky') {
     echo json_encode(['calls' => $calls]);
     exit;
 }
+if ($path === '/fp/fingerprints') {
+    // Two pages of the fingerprint service, for FingerprintManager::updateFingerprints()
+    header('Content-Type: application/json');
+    if (($_SERVER['HTTP_AUTHORIZATION'] ?? '') !== 'Bearer imp_test') {
+        http_response_code(401);
+        echo json_encode(['detail' => 'bad key']);
+        exit;
+    }
+    if ((int) ($_GET['skip'] ?? 0) === 0) {
+        echo json_encode([
+            'items' => [
+                ['name' => 'custom_a', 'data' => ['client' => 'chrome', 'client_version' => '999', 'tls_version' => '1.3', 'http_version' => 'v3']],
+                ['nameless' => true],
+            ],
+            'pagination' => ['has_more' => true, 'next_skip' => 2, 'limit' => (int) ($_GET['limit'] ?? 0)],
+        ]);
+    } else {
+        echo json_encode([
+            'data' => [['target' => 'custom_b', 'fingerprint' => json_encode(['client' => 'firefox', 'headers' => ['User-Agent' => 'B']])]],
+            'pagination' => ['has_more' => false],
+        ]);
+    }
+    exit;
+}
 if ($path === '/latin1') {
     header('Content-Type: text/plain; charset=iso-8859-1');
     echo "caf\xe9";

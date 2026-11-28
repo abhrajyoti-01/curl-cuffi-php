@@ -7,6 +7,7 @@ namespace CurlCffi\Tests\Integration;
 use CurlCffi\Curl\CurlMime;
 use CurlCffi\Ffi\Library;
 use CurlCffi\Ffi\LibraryException;
+use CurlCffi\Impersonate\Fingerprint;
 use CurlCffi\Requests\Exceptions\ConnectionError;
 use CurlCffi\Requests\Exceptions\HTTPError;
 use CurlCffi\Requests\Exceptions\ImpersonateError;
@@ -303,6 +304,54 @@ final class SessionTest extends TestCase
 
         $this->expectException(ImpersonateError::class);
         Requests::get(self::url('/echo'), impersonate: 'netscape4');
+    }
+
+    public function testCustomFingerprintOptions(): void
+    {
+        $ja3 = '771,4865-4866-4867-49195-49196-52393-49199-49200-52392-49171-49172-156-157-47-53,'
+            . '0-23-65281-10-11-35-16-5-13-51-45-43,29-23-24,0';
+        $akamai = '4:16777216|16711681|0|m,p,a,s';
+        $fp = new Fingerprint(headers: ['User-Agent' => 'FP/1.0', 'X-Fp' => 'from-fingerprint'], http2_settings: '1:65536');
+
+        if (!Library::supportsImpersonation()) {
+            // Stock libcurl has no fingerprint options: a clear error, not a silent plain request.
+            foreach ([['ja3' => $ja3], ['akamai' => $akamai], ['impersonate' => $fp]] as $opts) {
+                try {
+                    Requests::get(self::url('/echo'), ...$opts);
+                    self::fail('Expected ImpersonateError for ' . key($opts));
+                } catch (ImpersonateError $e) {
+                    self::assertStringContainsString('libcurl-impersonate', $e->getMessage());
+                }
+            }
+
+            return;
+        }
+
+        $r = Requests::get(self::url('/echo'), ja3: $ja3, akamai: $akamai, extra_fp: ['tls_grease' => false]);
+        self::assertSame(200, $r->statusCode);
+
+        // Fingerprint default headers fill in, but never replace the request's own.
+        $r = Requests::get(self::url('/echo'), impersonate: $fp, headers: ['X-Fp' => 'mine']);
+        $headers = $r->json()['headers'];
+        self::assertSame('FP/1.0', $headers['User-Agent']);
+        self::assertSame('mine', $headers['X-Fp']);
+
+        $r = Requests::get(self::url('/echo'), impersonate: $fp, default_headers: false);
+        self::assertArrayNotHasKey('X-Fp', $r->json()['headers']);
+
+        // Mixing impersonate with ja3 warns, as in Python.
+        $warning = null;
+        set_error_handler(static function (int $no, string $msg) use (&$warning): bool {
+            $warning = $msg;
+
+            return true;
+        }, E_USER_WARNING);
+        try {
+            Requests::get(self::url('/echo'), impersonate: 'chrome', ja3: $ja3);
+        } finally {
+            restore_error_handler();
+        }
+        self::assertSame('JA3 fingerprint was altered after impersonated version was set.', $warning);
     }
 }
 

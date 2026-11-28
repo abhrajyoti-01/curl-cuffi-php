@@ -14,6 +14,11 @@ use CurlCffi\Curl\CurlError;
 use CurlCffi\Curl\CurlMime;
 use CurlCffi\Ffi\Library;
 use CurlCffi\Impersonate\BrowserType;
+use CurlCffi\Impersonate\ExtraFingerprints;
+use CurlCffi\Impersonate\Fingerprint;
+use CurlCffi\Impersonate\FingerprintManager;
+use CurlCffi\Impersonate\FingerprintOptions;
+use CurlCffi\Impersonate\NativeTargets;
 use CurlCffi\Requests\Exceptions\ImpersonateError;
 use CurlCffi\Requests\Exceptions\RequestException;
 use CurlCffi\Requests\Exceptions\SessionClosed;
@@ -37,11 +42,12 @@ abstract class BaseSession
     public bool|int|string $allowRedirects;
     public int $maxRedirects;
     public RetryStrategy $retry;
-    public BrowserType|string|null $impersonate;
+    public BrowserType|Fingerprint|string|null $impersonate;
     public ?string $ja3;
     public ?string $akamai;
     public ?string $perk;
-    public mixed $extraFp;
+    /** @var ExtraFingerprints|array<string, mixed>|null */
+    public ExtraFingerprints|array|null $extraFp;
     public bool $defaultHeaders;
     /** @var string|callable(string): string */
     public mixed $defaultEncoding;
@@ -539,31 +545,77 @@ abstract class BaseSession
             $c->setopt(CurlOpt::HTTP_VERSION, self::normalizeHttpVersion($httpVersion));
         }
 
-        // impersonate
+        // impersonate: a built-in target, a downloaded one, or a Fingerprint
         $impersonate = $o['impersonate'] ?? $this->impersonate;
-        $defaultHeaders = $o['default_headers'] ?? $this->defaultHeaders;
-        if ($impersonate) {
-            $target = BrowserType::resolve($impersonate);
-            try {
-                $c->impersonate($target, (bool) $defaultHeaders);
-            } catch (CurlError $e) {
-                throw new ImpersonateError("Impersonating {$target} is not supported", $e->getCode(), null, $e);
+        $defaultHeaders = (bool) ($o['default_headers'] ?? $this->defaultHeaders);
+        // Header names the request set, which fingerprint default headers must not replace.
+        $existingHeaderNames = [];
+        if ($defaultHeaders) {
+            foreach ($lines as $line) {
+                $existingHeaderNames[self::headerLineKey($line)] = true;
             }
         }
-
-        foreach (['ja3', 'akamai', 'perk', 'extra_fp'] as $fp) {
-            $value = $o[$fp] ?? match ($fp) {
-                'ja3' => $this->ja3,
-                'akamai' => $this->akamai,
-                'perk' => $this->perk,
-                'extra_fp' => $this->extraFp,
-            };
-            if ($value !== null && $value !== '' && $value !== []) {
-                throw new ImpersonateError(
-                    "The '{$fp}' option is not supported yet; it arrives in a later release of curl-cffi-php. "
-                    . 'Use impersonate for now.'
-                );
+        try {
+            if ($impersonate instanceof Fingerprint) {
+                FingerprintOptions::applyFingerprint($c, $impersonate, $existingHeaderNames, $defaultHeaders);
+            } elseif ($impersonate !== null && $impersonate !== '') {
+                $name = $impersonate instanceof BrowserType ? $impersonate->value : (string) $impersonate;
+                if (NativeTargets::isNative($name)) {
+                    $target = BrowserType::resolve($name);
+                    try {
+                        $c->impersonate($target, $defaultHeaders);
+                    } catch (CurlError $e) {
+                        throw new ImpersonateError("Impersonating {$target} is not supported", $e->getCode(), null, $e);
+                    }
+                } else {
+                    $all = FingerprintManager::loadFingerprints();
+                    if (!isset($all[$name])) {
+                        throw new ImpersonateError("Impersonating {$name} is not supported");
+                    }
+                    FingerprintOptions::applyFingerprint($c, $all[$name], $existingHeaderNames, $defaultHeaders);
+                }
             }
+
+            $ja3 = $o['ja3'] ?? $this->ja3;
+            $extraFp = $o['extra_fp'] ?? $this->extraFp;
+            if (is_array($extraFp)) {
+                $extraFp = $extraFp === [] ? null : FingerprintOptions::extraFp($extraFp);
+            }
+            $akamai = $o['akamai'] ?? $this->akamai;
+            $perk = $o['perk'] ?? $this->perk;
+            $impersonated = $impersonate !== null;
+
+            if ($ja3) {
+                if ($impersonated) {
+                    trigger_error('JA3 fingerprint was altered after impersonated version was set.', E_USER_WARNING);
+                }
+                FingerprintOptions::setJa3Options($c, $ja3, (bool) $extraFp?->tlsPermuteExtensions);
+            }
+            if ($extraFp !== null) {
+                if ($impersonated) {
+                    trigger_error('Extra fingerprints were altered after impersonated version was set.', E_USER_WARNING);
+                }
+                FingerprintOptions::setExtraFp($c, $extraFp);
+            }
+            if ($akamai) {
+                if ($impersonated) {
+                    trigger_error('Akamai fingerprint was altered after impersonated version was set.', E_USER_WARNING);
+                }
+                FingerprintOptions::setAkamaiOptions($c, $akamai);
+            }
+            if ($perk) {
+                if ($impersonated) {
+                    trigger_error('Perk fingerprint was altered after impersonated version was set.', E_USER_WARNING);
+                }
+                FingerprintOptions::setPerkOptions($c, $perk);
+            }
+        } catch (CurlError $e) {
+            if ($e instanceof RequestException) {
+                throw $e;
+            }
+            // Stock libcurl does not know curl-impersonate's fingerprint options.
+            throw new ImpersonateError('Setting the fingerprint failed: ' . $e->getMessage()
+                . (Library::supportsImpersonation() ? '' : ' (load libcurl-impersonate, see bin/curl-cffi-install)'), $e->getCode(), null, $e);
         }
 
         // body and header sinks
@@ -852,6 +904,14 @@ abstract class BaseSession
     }
 
     /** @param list<string> $lines */
+    /** Lower-case name of a curl header line ("Name: value", "Name;" or "Name:"). */
+    private static function headerLineKey(string $line): string
+    {
+        $cut = strcspn($line, ':;');
+
+        return strtolower(trim(substr($line, 0, $cut)));
+    }
+
     private static function updateHeaderLine(array &$lines, string $key, string $value, bool $replace = false): void
     {
         $prefix = strtolower($key) . ':';
