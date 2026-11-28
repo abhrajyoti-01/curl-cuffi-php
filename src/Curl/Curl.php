@@ -73,6 +73,9 @@ class Curl
      */
     private array $keepAlive = [];
 
+    /** The CurlShare attached with CURLOPT_SHARE. libcurl keeps it across reset(). */
+    private ?CurlShare $share = null;
+
     /** First exception thrown inside a callback during perform(). */
     private ?\Throwable $callbackException = null;
 
@@ -120,6 +123,7 @@ class Curl
      *  - READFUNCTION takes callable(int $maxBytes): string, READDATA a readable stream
      *  - XFERINFOFUNCTION takes callable(int $dlTotal, int $dlNow, int $ulTotal, int $ulNow): ?int
      *  - DEBUGFUNCTION takes true (print to STDERR) or callable(int $type, string $data)
+     *  - SHARE takes a CurlShare (or null to detach)
      *
      * @return int 0 on success; failures throw CurlError
      */
@@ -154,6 +158,22 @@ class Curl
                 return $this->setXferInfoCallback(self::toCallable($value));
             case CurlOpt::DEBUGFUNCTION:
                 return $this->setDebugCallback($value === true ? self::defaultDebug(...) : self::toCallable($value));
+            case CurlOpt::SHARE:
+                if ($value instanceof CurlShare) {
+                    $ret = $this->check($this->ffi->curl_easy_setopt($this->handle, $option, $value->handle()), 'setopt', $option);
+                    $this->share = $value;
+
+                    return $ret;
+                }
+                if ($value === null) {
+                    $ret = $this->check($this->ffi->curl_easy_setopt($this->handle, $option, $this->ffi->cast('void *', null)), 'setopt', $option);
+                    $previous = $this->share;
+                    $this->share = null;
+                    $previous?->handleDetached();
+
+                    return $ret;
+                }
+                break;
         }
 
         if (in_array($option, self::SLIST_OPTIONS, true)) {
@@ -411,7 +431,19 @@ class Curl
             throw new CurlError('Cannot duplicate a closed handle.');
         }
 
-        return new self($this->cacert, false, $this->ffi->curl_easy_duphandle($this->handle));
+        $copy = new self($this->cacert, false, $this->ffi->curl_easy_duphandle($this->handle));
+        // duphandle does not copy CURLOPT_SHARE, so attach it again, as Python does.
+        if ($this->share !== null) {
+            $copy->setopt(CurlOpt::SHARE, $this->share);
+        }
+
+        return $copy;
+    }
+
+    /** @internal the CurlShare this handle is attached to */
+    public function attachedShare(): ?CurlShare
+    {
+        return $this->share;
     }
 
     /** Wrapper for curl_easy_reset(): back to a fresh handle state. */
@@ -438,6 +470,10 @@ class Curl
         $this->handle = null;
         $this->freeAllSlists();
         $this->keepAlive = [];
+        // A share closed while this handle used it is cleaned up now, as in Python.
+        $share = $this->share;
+        $this->share = null;
+        $share?->handleDetached();
     }
 
     /**

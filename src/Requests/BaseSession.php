@@ -12,6 +12,7 @@ use CurlCffi\Curl\Const\CurlOpt;
 use CurlCffi\Curl\Curl;
 use CurlCffi\Curl\CurlError;
 use CurlCffi\Curl\CurlMime;
+use CurlCffi\Curl\CurlShare;
 use CurlCffi\Ffi\Library;
 use CurlCffi\Impersonate\BrowserType;
 use CurlCffi\Impersonate\ExtraFingerprints;
@@ -19,6 +20,7 @@ use CurlCffi\Impersonate\Fingerprint;
 use CurlCffi\Impersonate\FingerprintManager;
 use CurlCffi\Impersonate\FingerprintOptions;
 use CurlCffi\Impersonate\NativeTargets;
+use CurlCffi\Requests\Cache\CacheBackend;
 use CurlCffi\Requests\Exceptions\ImpersonateError;
 use CurlCffi\Requests\Exceptions\RequestException;
 use CurlCffi\Requests\Exceptions\SessionClosed;
@@ -74,6 +76,8 @@ abstract class BaseSession
     public bool $raiseForStatus;
 
     protected Cookies $cookieJar;
+    protected ?CacheBackend $cache;
+    protected ?CurlShare $curlShare;
     protected bool $closed = false;
     private ?bool $hasCookieChanges = null;
 
@@ -109,6 +113,12 @@ abstract class BaseSession
         $this->cert = $o['cert'] ?? null;
         $this->discardCookies = $o['discard_cookies'] ?? false;
         $this->raiseForStatus = $o['raise_for_status'] ?? false;
+        $this->cache = CacheBackend::normalize($o['cache'] ?? null);
+        $share = $o['curl_share'] ?? null;
+        if ($share !== null && !$share instanceof CurlShare) {
+            throw new \TypeError('`curl_share` must be a ' . CurlShare::class);
+        }
+        $this->curlShare = $share;
 
         $responseClass = $o['response_class'] ?? Response::class;
         if (!is_a($responseClass, Response::class, true)) {
@@ -149,10 +159,19 @@ abstract class BaseSession
         $this->cookieJar = new Cookies($cookies);
     }
 
+    /** The response cache, or null when caching is off, like Python's cache_backend. */
+    public function cacheBackend(): ?CacheBackend
+    {
+        return $this->cache;
+    }
+
     public function __get(string $name): mixed
     {
         if ($name === 'cookies') {
             return $this->cookieJar;
+        }
+        if ($name === 'cache_backend' || $name === 'cacheBackend') {
+            return $this->cache;
         }
         throw new \LogicException("Undefined property Session::\${$name}");
     }
@@ -199,6 +218,20 @@ abstract class BaseSession
 
         $defaultEncoding = $o['default_encoding'] ?? $this->defaultEncoding;
         $discardCookies = ($o['discard_cookies'] ?? false) || $this->discardCookies;
+        $useCache = $this->cache?->shouldCacheRequest($request, $stream, $o['content_callback'] ?? null) ?? false;
+
+        if ($useCache && ($cached = $this->cache->get($request, $this->responseClass)) !== null) {
+            if (!$discardCookies) {
+                $this->cookieJar->update($cached->cookies);
+            }
+            $ownedMime?->close();
+            $c->reset();
+            if ($this->raiseForStatus) {
+                $cached->raiseForStatus();
+            }
+
+            return $cached;
+        }
 
         if ($stream) {
             $transfer = new StreamTransfer($c, function (CurlError $e) use ($c, $buffers, $request, $defaultEncoding, $discardCookies) {
@@ -237,6 +270,9 @@ abstract class BaseSession
             }
             $rsp = $this->parseResponse($c, $buffers, $request, $defaultEncoding, $discardCookies, $injected);
             $rsp->request = $request;
+            if ($useCache) {
+                $this->cache->set($request, $rsp);
+            }
         } finally {
             $ownedMime?->close();
             $c->reset();
@@ -302,6 +338,9 @@ abstract class BaseSession
      */
     protected function setCurlOptions(Curl $c, string $method, string $url, array $o, bool $stream): array
     {
+        if ($this->curlShare !== null && $c->attachedShare() !== $this->curlShare) {
+            $c->setopt(CurlOpt::SHARE, $this->curlShare);
+        }
         $buffers = new TransferBuffers();
         $content = $o['content'] ?? null;
         $data = $o['data'] ?? null;

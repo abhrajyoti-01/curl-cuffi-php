@@ -26,11 +26,15 @@
         "ext-ffi": "*"
     },
     "require-dev": {
+        "fivefilters/readability.php": "^3.3",
+        "league/html-to-markdown": "^5.2",
         "phpunit/phpunit": "^10.5"
     },
     "suggest": {
         "ext-zlib": "Lets the installer unpack .tar.gz archives without the tar command",
-        "ext-zip": "Lets the installer unpack .zip archives without PharData"
+        "ext-zip": "Lets the installer unpack .zip archives without PharData",
+        "fivefilters/readability.php": "Needed with league/html-to-markdown for Response::markdown(), like Python's \"extra\"",
+        "league/html-to-markdown": "Needed with fivefilters/readability.php for Response::markdown()"
     },
     "autoload": {
         "psr-4": {

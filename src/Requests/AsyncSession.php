@@ -77,6 +77,10 @@ class AsyncSession extends BaseSession
         if ($maxClients < 1) {
             throw new \InvalidArgumentException('max_clients must be >= 1');
         }
+        if (($options['cache'] ?? null) !== null) {
+            // Same as Python: cache reads and writes would block the loop.
+            throw new \LogicException('AsyncSession does not support cache yet because CacheBackend I/O is blocking.');
+        }
         parent::__construct(...$options);
         $this->maxClients = $maxClients;
         $this->loop = new Loop();

@@ -55,6 +55,12 @@ const char *curl_easy_strerror(CURLcode code);
 CURLcode curl_easy_pause(CURL *handle, int bitmask);
 CURLcode curl_easy_upkeep(CURL *curl);
 
+/* share interface (CurlShare) */
+CURLSH *curl_share_init(void);
+CURLSHcode curl_share_setopt(CURLSH *share, int option, ...);
+CURLSHcode curl_share_cleanup(CURLSH *share);
+const char *curl_share_strerror(CURLSHcode code);
+
 struct curl_slist *curl_slist_append(struct curl_slist *list, const char *data);
 void curl_slist_free_all(struct curl_slist *list);
 

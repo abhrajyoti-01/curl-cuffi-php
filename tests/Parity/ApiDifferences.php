@@ -29,8 +29,6 @@ final class ApiDifferences
     private const COOKIE_PLUMBING = 'plumbing between the jar and libcurl; PHP uses forCurl() and updateFromCurlChanges()';
     private const TYPE_ALIAS = 'a type alias for type checkers; PHP documents these shapes in docblocks';
     private const WARNING_CLASS = 'a Python warning category; PHP warnings are E_USER_WARNING, see CurlCffi\Warnings';
-    private const NEXT_CACHE = 'planned next: the response cache';
-    private const NEXT_SHARE = 'planned next: CurlShare';
 
     /** @var array<string, string> */
     public const NOT_PORTED = [
@@ -79,7 +77,6 @@ final class ApiDifferences
         'Response.stream_task' => self::STREAM_INTERNALS,
         'Response.queue' => self::STREAM_INTERNALS,
         'Response.quit_now' => self::STREAM_INTERNALS,
-        'Response.markdown' => 'planned next: needs an HTML readability and a Markdown package, an optional extra in Python too',
 
         'Cookies.get_cookies_for_curl' => self::COOKIE_PLUMBING,
         'Cookies.update_cookies_from_curl' => self::COOKIE_PLUMBING,
@@ -94,19 +91,5 @@ final class ApiDifferences
         'export CookieTypes' => self::TYPE_ALIAS,
         'export HeaderTypes' => self::TYPE_ALIAS,
         'export ProxySpec' => self::TYPE_ALIAS,
-
-        'Session.__init__(cache)' => self::NEXT_CACHE,
-        'AsyncSession.__init__(cache)' => self::NEXT_CACHE,
-        'Session.cache_backend' => self::NEXT_CACHE,
-        'AsyncSession.cache_backend' => self::NEXT_CACHE,
-        'CacheBackend' => self::NEXT_CACHE,
-        'FileCacheBackend' => self::NEXT_CACHE,
-        'export CacheBackend' => self::NEXT_CACHE,
-        'export FileCacheBackend' => self::NEXT_CACHE,
-
-        'Session.__init__(curl_share)' => self::NEXT_SHARE,
-        'AsyncSession.__init__(curl_share)' => self::NEXT_SHARE,
-        'CurlShare' => self::NEXT_SHARE,
-        'export CurlShare' => self::NEXT_SHARE,
     ];
 }

@@ -7,8 +7,9 @@ extension. No Python, no compiled PHP extension.
 
 > **Status: milestone 5 of 5.** `Requests`, `Session`, `AsyncSession`, custom fingerprints
 > (`ja3`, `akamai`, `extra_fp`, `perk`, `Fingerprint`), `WebSocket` / `AsyncWebSocket` and the
-> low-level `Curl` class work today, and CI tests them on Linux, macOS and Windows. Still to come:
-> the response cache, `CurlShare`, `Response::markdown()` and the `curl-cffi` command line tool.
+> low-level `Curl` class work today, with the response cache, `CurlShare` and
+> `Response::markdown()`, and CI tests them on Linux, macOS and Windows. Still to come: the
+> `curl-cffi` command line tool.
 
 ## Why not ext-curl?
 
@@ -193,6 +194,43 @@ Options are passed as PHP named arguments with the same names as Python (`allow_
 `max_redirects`, `proxy_auth`, `default_headers`, ...). camelCase spellings (`allowRedirects`) work
 too. Unknown options throw a `TypeError`, like Python.
 
+### Response cache
+
+`cache:` keeps successful GET responses, as Python's `cache=` does. Entries are HAR files in the
+same folder, with the same names and format as Python's, so both languages can share one cache.
+
+```php
+use CurlCffi\Requests\Cache\FileCacheBackend;
+
+$s = new Session(cache: 3600);              // fresh for an hour, in <temp>/curl_cffi_cache
+$s = new Session(cache: new FileCacheBackend(
+    expires: new \DateInterval('P1D'),
+    path: '/var/cache/http',
+    methods: ['GET', 'POST'],               // POST entries are keyed by their body
+    ignored: ['_ts'],                       // query parameters left out of the key
+));
+$s->cacheBackend()?->clear();
+```
+
+Streamed requests, `content_callback` requests and responses that are not `ok` are not cached.
+Extend `CacheBackend` for another store. As in Python, `AsyncSession` does not take `cache:` yet.
+
+### Sharing DNS, TLS sessions and connections
+
+```php
+use CurlCffi\Curl\CurlShare;
+
+$share = new CurlShare();                   // DNS and TLS session caches; connect: true adds the connection pool
+$a = new Session(curl_share: $share, impersonate: 'chrome');
+$b = new AsyncSession(curl_share: $share);  // b reuses a's DNS answers and TLS sessions
+```
+
+### Markdown
+
+`$r->markdown()` finds the page's main article and returns it as Markdown, like Python's
+`markdown()`. It needs two optional packages, as Python needs its `extra` dependencies:
+`composer require fivefilters/readability.php league/html-to-markdown`.
+
 ### Python to PHP
 
 | Python curl_cffi | PHP |
@@ -224,6 +262,9 @@ too. Unknown options throw a `TypeError`, like Python.
 | `curl_cffi.config_warnings(on=True)` | `CurlCffi\Warnings::config(on: true)` |
 | `s.upkeep()`, `await s.upkeep()` | `$s->upkeep()`, `$s->upkeep()->await()` |
 | `Session(curl=c)` | `new Session(curl: $c)` |
+| `Session(cache=3600)`, `FileCacheBackend(expires=timedelta(days=1))` | `new Session(cache: 3600)`, `new FileCacheBackend(expires: new \DateInterval('P1D'))` |
+| `CurlShare()`, `Session(curl_share=share)` | `new CurlShare()`, `new Session(curl_share: $share)` |
+| `r.markdown()` | `$r->markdown()` |
 
 Response properties also answer to their Python names (`$r->status_code`, `$r->raise_for_status()`).
 
@@ -245,8 +286,10 @@ Differences from Python:
 - `AsyncSession::wsConnect()` does the handshake synchronously (Python uses a thread), and an
   `AsyncWebSocket` reads while a `recv()` is waiting rather than in a background task. Python's
   queue-tuning options such as `recv_queue_size` don't exist here.
-- Not yet: the response cache (`cache=`), `CurlShare` (`curl_share=`), `Response::markdown()` and
-  the `curl-cffi` command line tool. `thread=` (eventlet/gevent) has no PHP equivalent.
+- `CurlShare` needs no lock callbacks: a PHP request runs on one thread.
+- `markdown()` uses readability.php and league/html-to-markdown instead of Python's
+  readability-lxml and markdownify, so whitespace and list markers can differ slightly.
+- Not yet: the `curl-cffi` command line tool. `thread=` (eventlet/gevent) has no PHP equivalent.
 - The full list of differences, each with its reason, is in
   [tests/Parity/ApiDifferences.php](tests/Parity/ApiDifferences.php); the parity tests below keep
   it complete.
@@ -278,8 +321,8 @@ and values as curl_cffi, including the impersonation options such as `CurlOpt::H
 2. `Requests::get()`, `Session`, `Response`, cookies, redirects, proxies, multipart, streaming (done)
 3. `AsyncSession` on `curl_multi` + PHP Fibers (done)
 4. Custom `ja3` / `akamai` / `extra_fp` / `perk`, `Fingerprint`, `WebSocket` / `AsyncWebSocket` (done)
-5. Parity test suite, CI on Linux/macOS/Windows, Packagist release (in progress), then the
-   response cache, `CurlShare`, `markdown()` and the command line tool
+5. Parity test suite, CI on Linux/macOS/Windows, Packagist release, the response cache,
+   `CurlShare` and `markdown()` (in progress), then the command line tool
 
 ## Tests
 
